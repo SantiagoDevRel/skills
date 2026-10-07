@@ -1,11 +1,11 @@
 ---
 name: arkiv-app-integration
-description: Integrate Arkiv SDK 0.8.1 into server APIs, injected-wallet apps and event-driven caches. Use when building a read proxy, signing endpoint, wallet connection, DTO or realtime synchronization; use lifecycle skills for the entity mutation itself.
+description: Integrate Arkiv SDK 0.8.x into server APIs, injected-wallet apps and event-driven caches. Use when building a read proxy, signing endpoint, wallet connection, DTO or live cache refresh; use arkiv-indexing for durable checkpointed mirrors and lifecycle skills for the entity mutation itself.
 license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
   network: tiramisu
-  verified: "2026-10-05"
+  verified: "2026-10-07"
 ---
 
 # Arkiv app integration
@@ -38,10 +38,10 @@ Read [browser-wallet.md](references/browser-wallet.md) for the injected-wallet c
 
 The five SDK events are `EntityCreated`, `EntityPatched`, `ExpiryExtended`, `OwnershipTransferred` and `EntityDeleted`. The watcher filters Arkiv's operation address, not your project's namespace. Entity Expiration has no event.
 
-- Filter known-key updates and deletions using prior collection membership. Fetch and validate **new** entity keys against namespace and creator/owner policy before including them; known-key-only filtering misses new creates.
+- Filter known-key updates and deletions using prior collection membership. Fetch and validate **new** entity keys against namespace and authenticated authorship before including them; known-key-only filtering misses new creates. A transfer into your wallet needs no recipient consent, so current ownership is not provenance. Use the publication gate in `arkiv-security-trust`.
 - Invalidate detail and affected collection caches. Attribute/ownership changes can remove an entity from its previous scope; deletion requires the saved previous scope because a head read cannot fetch the deleted entity.
 - Catch asynchronous handler failures, serialize processing where order matters, and stop the synchronous unwatch function during cleanup. A decoded event is an invalidation signal, not the full updated entity.
-- Replay from a verified checkpoint, deduplicate overlap, detect gaps and reconcile current state. Fetch canonical block hashes separately for reorg handling: SDK event context has no block hash or `removed` flag.
+- Replay finite HTTP block ranges from a verified checkpoint; shrink ranges on explicit log/response limits and preserve the checkpoint on failure. Do not pass an old checkpoint directly to `watchEntityEvents({ fromBlock })`: viem's HTTP fallback can repeatedly request the entire gap. Fetch canonical hashes and use `arkiv-indexing` for durable replay/reorg recovery.
 - Periodically refetch or sweep actual expiration blocks against chain head. An idle event stream does not prove a healthy connection or an unexpired cache.
 
 Read [realtime.md](references/realtime.md) when implementing events, replay, checkpoints or expiration-aware caches.

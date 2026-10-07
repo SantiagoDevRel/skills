@@ -39,7 +39,7 @@ If profile and follow creators differ, a creator-scoped fetch can legitimately o
 
 ## Refresh and optional mutations
 
-Watch the real `Created`, `Patched`, `ExpiryExtended`, `OwnerTransferred` and `Deleted` events with the replay/error/cleanup pattern in `arkiv-app-integration`. They come from the network event stream; match entity keys and refetch trusted metadata before updating a scoped projection. New entities require a scoped fetch because arbitrary event payloads are not the app's validated schema. Transfers/deletions need removal as well as addition; expiration needs a periodic live sweep because it has no automatic-expiration event.
+Watch the SDK `EntityCreated`, `EntityPatched`, `ExpiryExtended`, `OwnershipTransferred` and `EntityDeleted` events through `onEvent` or their `onEntityCreated`, `onEntityPatched`, `onExpiryExtended`, `onOwnershipTransferred` and `onEntityDeleted` handlers. Use the replay/error/cleanup pattern in `arkiv-app-integration`. Match entity keys and refetch trusted metadata before updating a scoped projection. New entities require a scoped fetch because event logs do not contain the app's validated payload/attribute schema. Transfers/deletions need removal as well as addition; expiration needs a periodic live sweep because it has no automatic-expiration event.
 
 Use bounded queues, deduplication, checkpointed replay and canonical reorg reconciliation for a persistent mirror. `arkiv-indexing` owns that workflow. `fetchArkivGraph` supplies a one-shot projection; it does not install an event listener, checkpoint or refresh timer.
 

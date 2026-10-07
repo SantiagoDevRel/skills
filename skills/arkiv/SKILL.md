@@ -5,7 +5,7 @@ license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
   network: "tiramisu"
-  verified: "2026-10-05"
+  verified: "2026-10-07"
 ---
 
 # Arkiv
@@ -29,13 +29,13 @@ Load only the task skill and references the request needs. For initial setup or 
 | Flags, patch, ownership, deletion and backup/restore | `arkiv-entity-lifecycle` |
 | Entity Expiration, Lifetime Extension and renewal | `arkiv-entity-expiration` |
 | Bulk writes, batches, nonces and ambiguous submissions | `arkiv-write-safety` |
-| Authenticated server routes, browser wallets, DTOs and realtime | `arkiv-app-integration` |
+| Authenticated server routes, browser wallets, DTOs and live cache refresh | `arkiv-app-integration` |
 | Public data, publisher provenance, signer custody and security review | `arkiv-security-trust` |
 | Exact error, empty query or stale read | `arkiv-troubleshooting` |
 | Encrypting payloads with `arkiv-encryption` | `arkiv-encryption` |
 | Chunked files/images or hybrid blob storage | `arkiv-large-files` |
 | Relationships and `arkiv-graph` visualization | `arkiv-social-graph` |
-| Arkiv-to-application mirrors and ingestion compatibility | `arkiv-indexing` |
+| Durable Arkiv-to-application/PostgreSQL mirrors, checkpoint replay and ingestion compatibility | `arkiv-indexing` |
 | Sanitized bug/feature draft and approved submission | `arkiv-feedback` |
 | Read-only tools, available profiles and skills served by an MCP | `arkiv-mcp` |
 
@@ -48,7 +48,7 @@ If a listed skill is not installed, say which guidance is missing and use the of
 - **Keep credentials in the right place.** RPC access keys belong in server-side `X-API-KEY` headers; locally held signing keys never go in prompts, URLs or browser bundles. Browser wallet signatures use the connected wallet's EOA; an access key does not pay gas or authenticate app users.
 - **Pin paginated reads.** Read a block once, use `.atBlock(block)`, and assign `page = await page.next()`. A limit is a page size. Restart the whole walk on a cursor error instead of merging inconsistent partial results.
 - **Reconcile before another write.** A transaction can succeed while receipt decoding fails. Inspect the hash/receipt, nonce and application identity before resubmitting. Transport retry is not application idempotency.
-- **Choose flags and Entity Expiration deliberately.** Readonly blocks patches, not all owner operations. Permissionless extension lets others keep data alive. Expiration removes live query state; it cannot retract copies already read.
+- **Choose flags and Entity Expiration deliberately.** Readonly blocks patches, not all owner operations. Permissionless extension lets others keep data alive. Expiration removes live query state; it cannot retract copies or transaction calldata. For publication trust, use an allowlisted creator plus readonly creation: even trusted creator and current owner cannot prove a mutable payload's writer after transfer away and back.
 
 ## What Arkiv supports
 
@@ -66,7 +66,7 @@ Announce the network before writing. Confirm the entity/operation and GLM-spendi
 
 Payloads and attributes are public. Use `arkiv-security-trust` and, when appropriate, `arkiv-encryption` before storing sensitive data; encrypting a payload still leaves its attributes visible.
 
-Arkiv can hold ephemeral coordination state for agents. Entity Expiration is cleanup, not an enforceable mutex or access-control lease; an application must validate current ownership, deadlines and its own authorization. Durable agent memory also requires a retention/recovery design outside a promise based on `ExpirationTime.permanent()`.
+Arkiv can hold ephemeral coordination state for agents. Entity Expiration is cleanup, not an enforceable mutex or access-control lease; an application must validate current ownership, deadlines and its own authorization. Durable agent state also requires a retention/recovery design outside a promise based on `ExpirationTime.permanent()`.
 
 ## References
 

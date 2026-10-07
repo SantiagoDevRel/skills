@@ -14,14 +14,14 @@ metadata:
 
 Use this skill before implementing an Arkiv entity schema. Start with the requested screen or operation: which entity type it returns, filters, ranges, sort, expected cardinality, trusted creators and update policy.
 
-For an existing error, use arkiv-troubleshooting first. Use arkiv-query for pagination and raw queries, arkiv-entity-lifecycle for mutation permissions, and arkiv-security-trust for authorization. For a first transaction, use arkiv-first-write.
+For an existing error, use arkiv-troubleshooting first. Use arkiv-query for pagination, arkiv-entity-lifecycle for mutation permissions, and arkiv-security-trust for authorization. Use arkiv-write-safety to journal and reconcile multi-step writes, arkiv-entity-expiration for related deadlines, and arkiv-first-write for a first transaction.
 
 Check the installed SDK version and declarations. Examples below target SDK 0.8.1 on Tiramisu. Producing a model does not authorize publishing data or spending GLM.
 
 ## Storage rules
 
 - Put scalar fields needed by predicates in **attributes**. Put nested objects, arrays, long descriptions and other unqueried data in **payload**. Both are public; exclude secrets and private fields before encoding either.
-- Create permits 32 cells total. Payload and content type consume two, leaving **30 user attributes**, including namespace and schema fields. Patches also count system mutations against their operation budget.
+- Create permits 32 cells total. Payload and content type consume two, leaving **30 user attributes**, including namespace and schema fields. Patches also count system mutations against their operation budget. Separately, Tiramisu caps the resulting entity at **32 user attributes** after a patch; splitting transactions cannot grow beyond that state ceiling.
 - Use lowercase `snake_case` application names, at most 32 bytes, beginning with a letter. The SDK accepts a wider alphabet than the current node; this conservative convention avoids the uppercase node rejection. `project` plus `entity_type` scopes an application's data. Anyone can copy these values; scope trusted reads by creator too.
 - A `str` holds at most 128 UTF-8 bytes and excludes C0 controls and DEL. Validate a text limit from the input contract; never silently truncate or replace a requested text filter with a hash.
 - There are nine user attribute types. `bytes` is system-only payload storage, not a tenth user type. No indexed array, object or null constructor exists.
@@ -48,14 +48,17 @@ Omit a nullable attribute when absent; an update to null must unset the old attr
 
 ## Worked marketplace model
 
-This creates a listing, then its tag relationships in a second transaction. Run it only with an authorized, funded Tiramisu wallet. The caller supplies a stable application ID and exact price. The result is not an upsert or uniqueness guarantee.
+This creates a listing, then its tag relationships in a second transaction. Run it only with an authorized, funded Tiramisu wallet. The caller supplies a stable application ID, exact price, project, parent lifetime, tag-count bound and remaining-block margin. Tags have set semantics here; preserve ordinals instead when duplicates matter. The result is not an upsert or uniqueness guarantee.
 
 ```typescript
-import { createWalletClient, ExpirationTime } from '@arkiv-network/sdk';
+import { createWalletClient, createPublicClient, ExpirationTime, type Expiry } from '@arkiv-network/sdk';
 import { addr, bool, i32, key, str, u64, u256 } from '@arkiv-network/sdk/attr';
+import { tiramisu } from '@arkiv-network/sdk/chains';
 import type { Address } from 'viem';
 
 type Wallet = ReturnType<typeof createWalletClient>;
+type Reader = ReturnType<typeof createPublicClient>;
+type ModelPolicy = { project: string; expires: Expiry; maxTags: number; minRemainingBlocks: bigint };
 type Listing = {
   listing_id: string;
   seller: Address;
@@ -66,16 +69,15 @@ type Listing = {
   created_at: bigint;
 };
 
-export function listingInput(listing: Listing) {
+export function listingInput(listing: Listing, policy: ModelPolicy) {
   return {
     payload: new TextEncoder().encode(JSON.stringify({
       title: listing.title,
       tags: listing.tags,
-      description: null,
     })),
     contentType: 'application/json',
     attributes: {
-      project: str('example_marketplace'),
+      project: str(policy.project),
       entity_type: str('listing'),
       schema_version: i32(1),
       listing_id: str(listing.listing_id),
@@ -85,34 +87,60 @@ export function listingInput(listing: Listing) {
       active: bool(true),
       created_at: u64(listing.created_at),
     },
-    expires: ExpirationTime.fromDays(30),
+    expires: policy.expires,
   };
 }
 
-export async function createListingAndTags(wallet: Wallet, listing: Listing) {
-  const parent = await wallet.createEntity(listingInput(listing));
-  if (listing.tags.length === 0) return { parent, tags: undefined };
+export async function createListingAndTags(
+  reader: Reader, wallet: Wallet, listing: Listing, policy: ModelPolicy,
+) {
+  if (wallet.chain?.id !== tiramisu.id || reader.chain?.id !== tiramisu.id) {
+    throw new Error('Both clients must use Tiramisu');
+  }
+  if (!policy.project || !Number.isSafeInteger(policy.maxTags) || policy.maxTags < 0 ||
+      policy.minRemainingBlocks < 1n || listing.tags.length > policy.maxTags) {
+    throw new Error('Configure a project, bounded tag count and positive remaining-block margin');
+  }
+  // Validate every tag and the parent before the first paid transaction.
+  const tagValues = [...new Set(listing.tags)].map(tag => str(tag));
+  const input = listingInput({ ...listing, tags: tagValues.map(tag => tag.value) }, policy);
+  const parent = await wallet.createEntity(input);
+  if (tagValues.length === 0) return { parent, tags: undefined };
+  const head = await reader.getBlockNumber({ cacheTime: 0 });
+  if (parent.expiresAt - head < policy.minRemainingBlocks) {
+    throw new Error(`Parent ${parent.entityKey} from ${parent.txHash} is too near expiry; reconcile it before continuing`);
+  }
   const tags = await wallet.executeBatch({
-    creates: listing.tags.map((tag) => ({
+    creates: tagValues.map((tag) => ({
       payload: new Uint8Array(),
       contentType: 'application/octet-stream',
       attributes: {
-        project: str('example_marketplace'),
+        project: input.attributes.project,
         entity_type: str('listing_tag'),
-        listing_id: str(listing.listing_id),
+        schema_version: i32(1),
+        listing_id: input.attributes.listing_id,
         listing_key: key(parent.entityKey),
-        tag: str(tag),
+        tag,
       },
-      expires: ExpirationTime.fromDays(30),
+      expires: ExpirationTime.atBlock(parent.expiresAt),
     })),
   });
+  // executeBatch returns keys, not deadlines. A read failure must not replay either write.
+  for (const entityKey of tags.createdEntities) {
+    try {
+      const child = await reader.getEntity(entityKey);
+      if (child.expiresAt > parent.expiresAt) throw new Error('Child outlives its parent');
+    } catch (cause) {
+      throw new Error(`Verify confirmed writes ${parent.txHash} and ${tags.txHash}; do not recreate them`, { cause });
+    }
+  }
   return { parent, tags };
 }
 ```
 
-The first transaction can succeed while tag creation fails. Persist its transaction hash and returned entity key, reconcile existing tag identities, and repair the second step without blindly creating another listing. A membership identity can include listing ID, tag and ordinal when duplicates matter.
+The first transaction can succeed while a later read or tag creation fails. Persist each known transaction hash and key before continuing; adapt the steps to the durable journal in arkiv-write-safety. The helper alone is not crash recovery. Reconcile the existing listing and tag identities before repairing the second step; do not rerun the whole helper after a read failure.
 
-The `seller` attribute is an application claim, not proof of who signed. Read the entity's creator and owner for provenance and mutation authority. Keep the payload tags and relationship projection consistent, or choose one authoritative representation. A relation's deadline is independent of its target's deadline.
+The `seller` attribute is an application claim, not proof of who signed. Keep payload tags and relationship projections consistent. Relative lifetimes resolve at inclusion: the same `fromDays(...)` in a later child transaction gives a later deadline. When children must not outlive their target, use `ExpirationTime.atBlock(parent.expiresAt)` without an `atLeast` floor. SDK 0.8.1 `createEntity` returns the receipt's deadline; for a parent from `executeBatch`, read its deadline with `getEntity`. The remaining-block check is an application margin, not an inclusion guarantee or protection against later parent deletion.
 
 ## Relations, versions and races
 
@@ -145,4 +173,4 @@ For a tool-assisted schema proposal, check the actual tool's input and output co
 - SDK 0.8.1: [npm package](https://www.npmjs.com/package/@arkiv-network/sdk/v/0.8.1), [attribute values](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/attr/values.ts), [cell encoding](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/attr/attributes.ts), [key derivation](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/entity/key.ts).
 - Official docs: [entity fundamentals](https://docs.arkiv.network/start-here/fundamentals/), [querying data](https://docs.arkiv.network/typescript-sdk/querying-data/), [mutating entities](https://docs.arkiv.network/json-rpc/mutating-entities/).
 
-Verified against SDK 0.8.1 source and retained Tiramisu query probes on 2026-10-05. Examples compile and execute with the real SDK over deterministic fixtures; no funded live writes were performed for this skill.
+The revised marketplace helper is typechecked and exercised with SDK 0.8.1 over deterministic fixtures. These local checks do not certify a funded run of the revised helper. SDK sources above establish encoding and key derivation; deadline handling also follows the versioned [receipt decoder](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/utils/arkivTransactions.ts).

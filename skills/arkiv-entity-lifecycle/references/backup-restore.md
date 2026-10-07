@@ -56,7 +56,7 @@ Creator scoping identifies original publishers; transferred mutable content may 
 
 1. Validate the complete snapshot and every application's payload schema. Rebuild typed attributes using their stored tags; decimal strings, `u64`/`u256`, addresses, and entity keys must not silently become ordinary strings.
 2. Choose authorized signer(s), ownership policy, creation flags, and new deadlines. Original owner/creator/creation block are provenance, not writable system fields. Creates initially belong to the restoring signer; authorized transfers can set the desired owner afterward, but creator remains the restoring signer.
-3. Check the create budget of 30 user attributes and payload size separately from encoded transaction size. Preserve provenance in the manifest or payload rather than adding attributes blindly to a full schema.
+3. Check both budgets: a create carries at most 30 user attributes, while the observed Tiramisu post-patch state ceiling is 32. Restore a mutable 31–32-attribute entity with a create of at most 30 plus a patch of the remaining fields, optionally in one batch using its predicted key. A readonly create cannot be patched later, including within the same batch; preserving readonly and all 31–32 indexed fields is not supported by this route. Reject that plan or agree on a schema with at most 30 attributes and explicitly move selected fields to payload. Preserve provenance in the manifest or payload instead of exceeding either budget.
 4. Build an explicit `oldKey → newKey` map from successful create receipts. Keep transaction hashes and progress after each batch. A partial multi-transaction restore is not an atomic restore; reconcile an uncertain batch before continuing or retrying.
 5. Rewrite typed `key()` relationships and any documented keys inside validated payloads or application indexes. Do not replace every hex-looking string: transaction hashes, addresses, and opaque application IDs are different values.
 6. For a DAG, restore parents before children and use their confirmed keys. For cycles or same-batch readonly relationships, predict every new key under exclusive control of the restoring wallet's entity nonce and reuse the exact salts. Without that control, use stable application IDs or a staged mutable representation agreed with the user.
@@ -65,6 +65,26 @@ Creator scoping identifies original publishers; transferred mutable content may 
 9. After the restored application and references are verified, retire superseded resources you created within the task. Removing an older entity or backup outside that authorized scope requires the user's explicit instruction.
 
 An old deadline may already be past at restore time; choose the new lifetime explicitly rather than submitting a dead deadline or extending it silently. Expired entities cannot be revived under their old keys. References to entities outside the export remain external and require a preservation or replacement policy.
+
+## Plan a wide mutable restore
+
+This helper partitions validated user attributes without dropping their types or values. Use `createAttributes` on the create and `patchAttributes` on a patch of its confirmed or exclusively predicted key. Omit an empty patch. For an atomic restore, creates run before patches in `executeBatch`; keep the original mutable creation flags. Flags cannot be changed later to make a staged mutable entity readonly.
+
+```typescript
+import type { AttributeInputs } from "@arkiv-network/sdk"
+
+export function planRestoredAttributes(attributes: AttributeInputs, isReadonly: boolean) {
+  const entries = Object.entries(attributes)
+  if (entries.length > 32) throw new Error("The restored entity exceeds 32 user attributes")
+  if (isReadonly && entries.length > 30) {
+    throw new Error("Readonly restoration requires an explicit schema of at most 30 user attributes")
+  }
+  return {
+    createAttributes: Object.fromEntries(entries.slice(0, 30)),
+    patchAttributes: Object.fromEntries(entries.slice(30)),
+  }
+}
+```
 
 ## Verify the restore
 

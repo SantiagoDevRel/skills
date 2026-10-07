@@ -23,7 +23,7 @@ Messages in quotes below are exact SDK message stems; `<...>` marks a dynamic va
 | Node ABI: `ExpiryNotExtended` | Inspect the requested/current deadlines and actual revert data; re-read after concurrent extension. Retained Tiramisu estimates rejected a shorter target but accepted an equal target. Equal requests add no lifetime; an estimate is not a mined execution. |
 | Node ABI: `EmptyBatch`, `AttributesNotSorted` | These revert names exist in the SDK ABI. SDK guards empty operations and sorts encoded attribute names; raw callers must compare their encoding. |
 | Node observation: `contract creation is disabled (no-EVM Arkiv executor)` | Retained Tiramisu contract-creation rejection; native system entry-point operations remain valid. |
-| JavaScript: `Do not know how to serialize a BigInt` | Explicitly serialize DTO bigint fields as strings; do not globally erase precision with Number. |
+| JavaScript: `Do not know how to serialize a BigInt` | Identify where serialization failed. If `JSON.stringify(await createEntity(...))` threw after the call returned, the write already completed: do not run it again. Preserve or recover the original entity key/hash using the operation journal, signer nonce and authenticated receipt; a creator-scoped natural-key query is a lookup aid, not proof of uniqueness. Follow `arkiv-write-safety` before adding a narrow DTO with bigint fields as decimal strings. |
 
 ## Query RPC codes
 
@@ -75,3 +75,20 @@ export function recoveryFor(error: unknown): {
 ```
 
 This helper assumes the actual typed SDK errors are passed through. SDK instances in another bundle/realm may fail `instanceof`; preserve structured discriminants in your own boundary or inspect the original cause safely. Generic RPC `-32001` outside `arkiv_query` can mean something else, so do not classify arbitrary Ethereum errors with this query mapping.
+
+## Serialize a completed write without repeating it
+
+Separate the wallet call from serialization. The durable writer in `arkiv-write-safety` captures the transaction hash before broadcast; after confirmation, persist the returned identities before formatting a response. If persistence or response serialization fails, reconcile that operation ID instead of calling the wallet again.
+
+```typescript
+import type { Hex } from "viem"
+
+export function createResultDto(result: {
+  entityKey: Hex; txHash: Hex; expiresAt: bigint
+}) {
+  return { arkivEntityKey: result.entityKey, transactionHash: result.txHash,
+    expiresAtBlock: result.expiresAt.toString() }
+}
+```
+
+A serialization error before the wallet call is a local failure. The same error after the call cannot establish that nothing was written. Do not convert a block number to `Number` merely to make JSON work.

@@ -1,13 +1,14 @@
 # Limits and units
 
-Checked through 2026-10-06 against SDK 0.8.1 and bounded Tiramisu probes. SDK validation, an observed response and deployed consensus limits are different evidence.
+Checked through 2026-10-07 against SDK 0.8.1 and bounded Tiramisu probes. SDK validation, an observed response and deployed consensus limits are different evidence.
 
 | Item | Value or procedure | Boundary |
 | --- | --- | --- |
 | Payload | 128 KiB (131,072 bytes) | SDK `$payload` cell limit; ABI and transaction overhead are additional. |
 | Entire transaction bytes | Deployed maximum not verified | Do not substitute the payload bound or an upstream txpool default. Estimate the actual operation and bound uploads. |
 | HTTP request bytes | Provider-specific; measure the encoded request | Hex calldata, ABI and JSON add overhead. Retained Tiramisu unsigned estimates with a 131,072-byte payload returned HTTP 413, including a payload-only operation. This does not establish a consensus limit. Choose chunk sizes from accepted exact estimates. |
-| Attribute cells | 32 per operation; 30 user attributes on create | Payload/content type consume two cells; patch set/unset and replaced system cells share the operation budget. This is not a lifetime state ceiling. |
+| Attribute cells | 32 per operation; 30 user attributes on create | SDK encoding budget: payload/content type consume two create cells; patch set/unset and supplied system cells share the operation budget. |
+| User attributes after patch | 32 on the observed Tiramisu engine | Count distinct names in the resulting state: retained names plus new `set` names minus removed `unset` names. `$payload`/`$contentType` are excluded. A 33rd user attribute was rejected with `TooManyAttributes(33,32)`; splitting transactions does not raise this ceiling. |
 | Attribute name | 32 ASCII bytes | Recommended lowercase subset, leading letter, no reserved keywords. |
 | String attribute | 128 UTF-8 bytes | Bytes, not characters; C0 controls and DEL rejected. Payload has a separate limit. |
 | Decimal | 18 fractional decimal places | Prefer exact string input to `dec`; avoid floating-point money. |

@@ -5,7 +5,7 @@ license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
   network: tiramisu
-  verified: "2026-10-05"
+  verified: "2026-10-07"
 ---
 
 # Arkiv troubleshooting
@@ -41,7 +41,7 @@ The messages below are SDK 0.8.1 templates or retained Tiramisu observations fro
 | `Account required` | Supply an explicit connected EOA account; recheck chain/account before signing. | `arkiv-app-integration` |
 | `EntityMutationError` / unknown write response | Reconcile original hash/receipt/state before another write. Its `txHash` may be undefined. | `arkiv-write-safety` |
 | HTTP `401`/`403` or `429` | Verify provider key policy or quota and current headers; neither means the query succeeded empty. | `arkiv-app-integration` |
-| `Do not know how to serialize a BigInt` | Build a narrow DTO and convert block bigints to decimal strings. | `arkiv-app-integration` |
+| `Do not know how to serialize a BigInt` | If serialization failed after a wallet call returned, preserve its entity key/hash: the write completed. Do not repeat it. Recover missing identities from the original signer/nonce/receipt, then serialize a narrow DTO with decimal strings. | `arkiv-write-safety`, `arkiv-app-integration` |
 | `contract creation is disabled (no-EVM Arkiv executor)` | Use native entity operations; do not deploy user EVM contracts on Arkiv. | `arkiv` |
 
 `Execution error without revert data` does not identify a single cause. Inspect wallet/RPC chain, account queue, nonce, gas/size estimates and receipt evidence; do not diagnose a nonce collision from that text alone. For raw `EmptyBatch` or `AttributesNotSorted`, compare calldata with SDK encoding rather than inventing a node fix.

@@ -41,6 +41,7 @@ Permissionless extension lets others pay to keep an entity alive. It grants no p
 - Patch `set` writes only named attributes; `unset` removes named attributes. Omitting payload or content type preserves it; an empty payload explicitly replaces it with empty bytes. Unsetting an absent attribute is allowed.
 - Patch cannot change the key, owner, flags, or expiration. Use `changeOwnership` or `extendEntity` for those fields.
 - Each patch has at most 32 mutation cells: distinct `set` names + distinct `unset` names + one for a supplied payload + one for a supplied content type. A name cannot appear in both `set` and `unset`. Create reserves two cells, leaving 30 user attributes. Use snake_case names and lowercase MIME types without parameters.
+- Separately, the observed Tiramisu engine caps the resulting entity at **32 user attributes**, excluding payload/content type. Count the union of retained and `set` names after removing `unset` names; replacing an existing name adds no slot. Only a mutable entity can grow from 30 to 31–32 by patching. Splitting writes cannot fit a 33rd attribute; remove an attribute or explicitly revise the payload/schema instead.
 
 ## Worked operations
 
@@ -88,6 +89,9 @@ export async function replaceReadonlyNote(
       return [name, value] as const
     }),
   )
+  if (Object.keys(attributes).length > 30) {
+    throw new Error("A readonly replacement must fit 30 user attributes; choose an explicit revised schema")
+  }
   const created = await wallet.createEntity({
     payload: jsonToPayload({ title, body: note.body }),
     contentType: "application/json", attributes, expires,
@@ -193,7 +197,9 @@ Without exclusive custody, use stable application IDs for independently recovera
 | `TransferToSelf` / `TransferToZeroAddress` | Select a different nonzero owner. |
 | `EntityNotFound` / `EntityExpired` | Check the key, network, and historical context; a longer target does not revive it. |
 | `EmptyPatchError` | Supply at least one mutation or skip the operation. |
-| `ConflictingMutationError` / `TooManyAttributesError` | Remove overlapping names or split the intended mutations with recovery between transactions. |
+| `ConflictingMutationError` | Remove names appearing in both `set` and `unset`. |
+| Local SDK `TooManyAttributesError` | Fit each operation within 32 cells, including supplied system cells. Split only when every intermediate and final entity state stays within 32 user attributes. |
+| Decoded engine `TooManyAttributes(count,32)` | The resulting entity has too many user attributes. Unset fields or explicitly move them into payload; splitting transactions does not fix this state limit. The decoded revert name need not appear in `error.name` or its message. |
 | `EntityMutationError` | Inspect its hash and receipt before retrying; load `arkiv-write-safety`. |
 
 ## Verification and references

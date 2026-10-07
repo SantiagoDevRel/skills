@@ -77,4 +77,6 @@ A mismatch check runs **after** a successful transaction. It cannot roll back th
 
 Neither `key()` validation nor key prediction checks that a target exists. Parent deletion, expiration or replacement can leave a valid dangling reference. A transaction receipt is not a promise about future retention or the application's reorganization policy.
 
+The identical relative lifetimes in this atomic batch resolve against the same inclusion block. For a child created in a later transaction, use `ExpirationTime.atBlock(parent.expiresAt)` without an `atLeast` floor when it must not outlive the parent. Obtain a batch-created parent's deadline with `getEntity`; `executeBatch` returns keys, not per-entity deadlines. Check a fresh head and an application-defined remaining-block margin before submitting children, and verify their actual deadlines after confirmation.
+
 SDK 0.8.1 sources: [prediction](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/entity/key.ts), [entity nonce](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/actions/public/getEntityNonce.ts), [batch result](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/actions/wallet/executeBatch.ts), [operation construction](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/utils/arkivTransactions.ts). Checked 2026-10-05; exact example verified with deterministic real-SDK fixtures, without a funded live write.

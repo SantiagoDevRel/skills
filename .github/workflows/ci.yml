@@ -41,6 +41,9 @@ jobs:
           cache: npm
           cache-dependency-path: tests/snippets/package-lock.json
       - run: npm ci --prefix tests/snippets --ignore-scripts --no-audit --no-fund
+      - run: node --test tests/snippets/sdk-compatibility.test.mjs
+      - name: Enforce the published SDK supported range
+        run: node scripts/check-sdk-compatibility.mjs "$ARKIV_HEALTH_DIRECTORY/sdk-compatibility.json"
       - run: node --test tests/snippets/infrastructure.test.mjs
       - run: node --test tests/snippets/mcp.test.mjs
       - run: node --test tests/snippets/rpc.test.mjs

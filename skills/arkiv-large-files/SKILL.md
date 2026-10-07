@@ -5,7 +5,7 @@ license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
   network: tiramisu
-  verified: "2026-10-05"
+  verified: "2026-10-06"
 ---
 
 # Arkiv large files
@@ -14,21 +14,18 @@ Keep searchable metadata in Arkiv attributes and opaque bytes in payloads or an 
 
 ## Current package gate
 
-Checked published packages on 2026-10-05:
+Registry releases verified on 2026-10-06 UTC; pin the tested versions:
 
-| Package | Version | SDK peer | Disposition for SDK 0.8.1 |
+| Package | Version | SDK peer | Verified use |
 | --- | --- | --- | --- |
-| `arkiv-chunking` | 0.1.0 | Exactly 0.8.0 | Pattern documentation only. |
-| `arkiv-images` | 0.1.1 | Exactly 0.8.0 | Pattern documentation only; also depends on `arkiv-chunking` 0.1.0. |
+| `arkiv-chunking` | 0.1.1 | `>=0.8.1 <0.9` | SDK 0.8.1 uploads, complete downloads and byte/hash verification. |
+| `arkiv-images` | 0.1.2 | `>=0.8.1 <0.9` | SDK 0.8.1 inline/chunked PNG/JPEG; depends on chunking 0.1.1. |
 
-Do not recommend installing these versions into an SDK 0.8.1 application, downgrade its SDK, or bypass peer checks. Before adopting a newer release, inspect its published metadata, bundled `AGENTS.md` and README, then verify strict types and byte-for-byte retrieval with the target SDK. Read-only version checks:
+A strict npm consumer passed public API typechecks and import checks with SDK 0.8.1 and viem 2.57.3. Funded Tiramisu byte roundtrips used the same compiled modules with SDK 0.8.1 and viem 2.56.3. These checks cover the tested versions, not every release in the peer range.
 
-```sh
-npm view arkiv-chunking@latest version peerDependencies --json
-npm view arkiv-images@latest version peerDependencies dependencies --json
-```
+Historical chunking 0.1.0 and images 0.1.1 required SDK 0.8.0. Do not downgrade the SDK or bypass peers to install them. Read the installed `AGENTS.md` and README before integration; re-check metadata when selecting another release. Registry verification and the earlier packed-candidate execution are separate evidence.
 
-The patterns below are application guidance. They are not a claim that these packages support SDK 0.8.1 or implement automatic resume.
+The packages do not provide an upload-resume API, automatic write retries or whole-file atomicity. The caller owns its writer queue, durable journal and ambiguous-write reconciliation.
 
 ## Choose a representation
 
@@ -46,7 +43,7 @@ Before returning bytes, require exactly one part for every index, valid bounds, 
 
 The root must not remain available while required parts are already expired: choose `rootExpiresAt <= min(requiredPartExpiresAt)`. A shared absolute deadline is the clearest application design; also leave enough blocks for upload completion and the intended reading window. Confirm observed deadlines and keep uploads from continuing after their root becomes unavailable. A block deadline does not guarantee a wall-clock interval or prevent manual deletion.
 
-Published `arkiv-chunking@0.1.0` creates a mutable incomplete manifest, then N readonly chunks sequentially, then a finalization patch: **N+2 independent transactions**. It gives each entity the same relative lifetime at different inclusion blocks, so later chunks outlive the earlier manifest. It does not implement the shared-absolute-deadline design above. Its policies are 100,000-byte default chunks, 120,000-byte maximum chunks, 32 MiB files, and at most 4,096 chunks; these are package policies, not network maxima.
+Published `arkiv-chunking@0.1.1` creates a mutable incomplete manifest, then N readonly chunks sequentially, then a finalization patch: **N+2 independent transactions**. It gives each entity the same relative lifetime at different inclusion blocks, so later chunks outlive the earlier manifest. It does not implement the shared-absolute-deadline design above. It requires at least `max(32, N+3)` lifetime blocks and checks that the manifest remains live before each part and finalization; these checks do not guarantee completion during a slow upload. Its policies are 100,000-byte default chunks, 120,000-byte maximum chunks, 32 MiB files, and at most 4,096 chunks; these are package policies, not network maxima.
 
 ## Partial uploads and recovery
 
@@ -59,15 +56,15 @@ Published `arkiv-chunking@0.1.0` creates a mutable incomplete manifest, then N r
 
 ## Images
 
-Published `arkiv-images@0.1.1` preserves original static PNG/JPEG bytes. It does not resize, recompress, strip EXIF/GPS, encrypt, or scan for malware. Decide whether the original file and metadata may be public before uploading; filenames are untrusted text.
+Published `arkiv-images@0.1.2` preserves original static PNG/JPEG bytes. It does not resize, recompress, strip EXIF/GPS, encrypt, or scan for malware. Decide whether the original file and metadata may be public before uploading; filenames are untrusted text.
 
-Its policies are 25 MiB, 40 million pixels, and a 120,000-byte inline threshold. Inline storage uses one readonly image entity and one transaction. Larger images use 100,000-byte chunks, a file manifest, and a final readonly image root: **N+2 entities and N+3 transactions**. The root's `manifest` key differs from the image entity key.
+Its policies are 25 MiB, 40 million pixels, and a 120,000-byte inline threshold. Inline storage uses one readonly image entity and one transaction. Larger images use 100,000-byte chunks, a file manifest, and a final readonly image root: **N+2 entities and N+3 transactions**. The root's `manifest` key differs from the image entity key. Storage requires at least `max(64, transactionCount+32)` lifetime blocks; this is a package admission policy, not a wall-clock promise.
 
 The final image root is younger than its file manifest and can outlive it. A live image root alone does not prove retrievability. Retrieval reports the earlier queried root/manifest deadline, checks byte length, dimensions and SHA-256, and returns no partial image. The root and manifest reads are separate snapshots; chunk pages share the manifest snapshot.
 
 Container inspection is not a complete pixel decode. A browser consumer must decode approved PNG/JPEG bytes before upload and after retrieval, handle decoding errors, render only the allowed raster MIME, and revoke Blob URLs it creates. Serve other fetched files as downloads, and never execute their contents or filenames.
 
-## Worked hybrid pointer without incompatible packages
+## Worked hybrid pointer
 
 This Node 22+/secure-browser helper prepares an SDK 0.8.1 create descriptor and verifies retrieved bytes locally. It uploads nothing and sends no transaction. First upload the public blob through the application's existing authorized storage flow and verify its retrieval; then submit the descriptor only under the user's write/spend authorization. Supply an explicit origin allowlist; public pointers must not embed temporary signed URLs or provider credentials.
 
@@ -125,6 +122,7 @@ The URI allowlist is an application input, not a general server-fetch security i
 
 Record actual versions, representation, transaction count/progress, observed deadlines, and byte-for-byte plus hash comparison. Distinguish local helpers, mocked SDK transport, no-funds estimates, and funded network uploads. Re-check peer compatibility before changing the package gate.
 
-- [Published chunking package](https://www.npmjs.com/package/arkiv-chunking/v/0.1.0), [source and consumer guide](https://github.com/SantiagoDevRel/arkiv-chunking).
-- [Published images package](https://www.npmjs.com/package/arkiv-images/v/0.1.1), [source and consumer guide](https://github.com/SantiagoDevRel/arkiv-images).
+- [Published chunking package](https://www.npmjs.com/package/arkiv-chunking/v/0.1.1), [source and consumer guide](https://github.com/SantiagoDevRel/arkiv-chunking/tree/039f94e565ff8aeb7ea1af7aff6b09ac9392c1f6).
+- [Published images package](https://www.npmjs.com/package/arkiv-images/v/0.1.2), [source and consumer guide](https://github.com/SantiagoDevRel/arkiv-images/tree/b0a9a7f8767419ecaa2183c063cfbb356099c918).
+- Released execution evidence: [chunking](https://unpkg.com/arkiv-chunking@0.1.1/docs/sdk-0.8.1-evidence.json) and [images](https://unpkg.com/arkiv-images@0.1.2/docs/sdk-0.8.1-evidence.json). These record the earlier packed candidates, module hashes, receipt subsets and tested versions.
 - [SDK source](https://github.com/Arkiv-Network/arkiv-sdk-js): published 0.8.1 `src/attr/attributes.ts`, `src/utils/expirationTime.ts`, `src/entity/expiry.ts`, and `src/query/queryResult.ts`.

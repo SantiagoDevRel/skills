@@ -1,11 +1,11 @@
 ---
 name: arkiv-indexing
-description: Design and verify Arkiv-to-application entity mirrors from native operation logs, with checkpoints, replay, reorganization recovery and Entity Expiration sweeps. Use for an app or PostgreSQL projection and arkiv-sync compatibility checks. This skill's implementation direction is Arkiv to app; arkiv-sync adoption is gated pending a verified compatible release.
+description: Design and verify Arkiv-to-application entity mirrors from native operation logs, with checkpoints, replay, reorganization recovery and Entity Expiration sweeps. Use for an app or PostgreSQL projection and arkiv-sync compatibility checks. This skill's worked consumer runs Arkiv to app; use the verified arkiv-sync 0.3.0 release for the separate EVM-events-to-Arkiv direction.
 license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
   network: "tiramisu"
-  verified: "2026-10-05"
+  verified: "2026-10-06"
 ---
 
 # Mirror Arkiv state into an application
@@ -18,9 +18,13 @@ The examples target SDK 0.8.1 and Tiramisu. Building a local projection does not
 
 ## Compatibility gate: arkiv-sync
 
-The reviewed **arkiv-sync 0.2.2** archive depends on SDK **`^0.6.8`**, statically imports a chain unavailable in SDK 0.8.1, and uses removed query/mutation APIs. It implements a different direction: chain events into Arkiv. Changing its RPC URL or dependency range does not make its published implementation compatible.
+Published **arkiv-sync 0.3.0** depends on SDK **0.8.1** and viem **`^2.57.3`**. Strict npm installation, public API typechecks and the `create-arkiv-sync@0.3.0` default scaffold passed with those versions. Funded Tiramisu tests used the same compiled sync module. Before running a worker or funded `quickCheck`, configure source inputs, a locally held authorized signer, sink network and spend budget.
 
-Do not recommend installing it or use it in SDK 0.8.1/Tiramisu code until a compatible release is published and its integration is verified. This skill provides a custom Arkiv-to-app pattern instead. No third-party indexer version or compatibility is asserted.
+This package reads **EVM contract events into Arkiv**. Its public entries include `EvmSource`, `createIndexer`, `ArkivSink` and `createArkivReader`. The custom consumer below reads **Arkiv into an application projection**; installing sync does not turn it into that reverse mirror or provide application authorization.
+
+The historical **0.2.2** archive depended on SDK **`^0.6.8`**, statically imported a chain absent from SDK 0.8.1 and used removed query/mutation APIs. Release 0.3.0 updates chain selection, typed SDK queries, full replacement through set/unset mutations and fresh pinned scans. Those source changes, not an RPC URL or widened dependency declaration alone, resolve the old incompatibility. Do not recommend 0.2.2 for this consumer.
+
+Use the installed `AGENTS.md` and README for configuration, source checkpoints, owner/sync isolation and reorganization recovery. Serialize the signer and preserve a durable caller write journal. `WriteReconciliationRequiredError` stops further writes until the known outcome is reconciled; restart is not evidence that an earlier write failed. Controlled source/reorg fixtures do not prove a natural network reorganization, and the default external ERC20 source has not been certified by those native-event tests.
 
 ## Source contract
 
@@ -88,7 +92,8 @@ If an available tool profile offers read-only entity verification, use it to cor
 ## Sources
 
 - SDK 0.8.1: [five-event ABI](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/entity/events.ts), [watcher address/context/callback handling](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/actions/public/watchEntityEvents.ts), [event types](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/types/events.ts), [head entity lookup](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/actions/public/getEntity.ts), [pinned query engine](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/query/engine.ts).
-- Compatibility gate: [arkiv-sync 0.2.2 manifest](https://unpkg.com/arkiv-sync@0.2.2/package.json), [published module](https://unpkg.com/arkiv-sync@0.2.2/dist/index.js), [SDK 0.8.1 chain exports](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/chains/index.ts). Published source, not a repository assumption, establishes the mismatch.
+- Current release: [0.3.0 manifest](https://unpkg.com/arkiv-sync@0.3.0/package.json), [public declarations](https://unpkg.com/arkiv-sync@0.3.0/dist/index.d.ts), [compiled module](https://unpkg.com/arkiv-sync@0.3.0/dist/index.js), [scaffolder manifest](https://unpkg.com/create-arkiv-sync@0.3.0/package.json), [immutable consumer/source guide](https://github.com/SantiagoDevRel/arkiv-sync/tree/a43aa53415d5b3f627f74781fc118d1164733b68) and [current execution evidence](https://unpkg.com/arkiv-sync@0.3.0/docs/current-candidate-evidence.json). Publication is verified separately from the archived candidate execution.
+- Historical compatibility gate: [arkiv-sync 0.2.2 manifest](https://unpkg.com/arkiv-sync@0.2.2/package.json), [published module](https://unpkg.com/arkiv-sync@0.2.2/dist/index.js), [SDK 0.8.1 chain exports](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/chains/index.ts). Published source, not a repository assumption, establishes the mismatch.
 - Official [query guide](https://docs.arkiv.network/typescript-sdk/querying-data/) and [native operation protocol](https://docs.arkiv.network/json-rpc/mutating-entities/).
 
-Checked 2026-10-05. The worked consumer compiles against SDK 0.8.1 and runs with deterministic native-log/query fixtures; no live indexer, user database changes or funded transactions were performed.
+Checked 2026-10-06 UTC. The worked Arkiv-to-app Map consumer compiles against SDK 0.8.1 and runs with deterministic native-log/query fixtures; that example performs no funded writes or user database changes. Separate package evidence documents scoped live EVM-source/sink and application readback results.

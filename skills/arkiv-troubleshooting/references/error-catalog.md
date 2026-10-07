@@ -42,6 +42,8 @@ For `-32602`, inspect the exact invalid-parameter detail. Retained examples incl
 
 For HTTP `429`, honor `Retry-After` and current `ratelimit` headers before a bounded read retry. A retained anonymous-quota response used `ANON_COST_LIMITED`, but do not treat that body, quota or reset as permanent. A write rejection/timeout needs transaction reconciliation before any resend, even if the cause includes 429. For `401`/`403`, check the configured network and key policy without revealing the key. An invalid placeholder access key returned HTTP `401` with `INVALID_KEY` in retained Tiramisu evidence on 2026-10-05; preserve actual provider messages rather than hardcoding that body as a universal contract.
 
+For HTTP `413`, measure the encoded JSON-RPC request, not only the payload. On 2026-10-06, three unsigned Tiramisu create estimates with a 131,072-byte payload returned `413`, including a payload-only operation. This is an HTTP ingress observation, not a contract revert or deployed consensus maximum. SDK mutation wrapping can replace the outer message with `Transaction failed: Execution error without revert data`; retain the original HTTP cause. Reduce the request size or use chunking, then estimate again. If a broadcast was attempted, reconcile its known hash before considering a resend.
+
 ## A narrow typed diagnostic helper
 
 This helper chooses a recovery path. It does not retry, reveal query/message text or establish whether an unknown transaction committed.

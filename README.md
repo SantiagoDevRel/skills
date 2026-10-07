@@ -17,12 +17,14 @@ Agent skills for working with [Arkiv](https://arkiv.network) — the Web3 databa
 | [`arkiv-security-trust`](skills/arkiv-security-trust/SKILL.md) | Defines public-data, publisher, signer, and authorization boundaries. |
 | [`arkiv-troubleshooting`](skills/arkiv-troubleshooting/SKILL.md) | Diagnoses exact errors, missing results, and stale reads. |
 | [`arkiv-encryption`](skills/arkiv-encryption/SKILL.md) | Encrypts payloads and explains key custody and remaining metadata exposure. |
-| [`arkiv-large-files`](skills/arkiv-large-files/SKILL.md) | Plans chunks, images, and hybrid pointers; current package adoption is gated. |
+| [`arkiv-large-files`](skills/arkiv-large-files/SKILL.md) | Stores and verifies chunks/images with SDK 0.8.1 releases; plans hybrid pointers and recovery. |
 | [`arkiv-social-graph`](skills/arkiv-social-graph/SKILL.md) | Models relationships and scopes arkiv-graph visualization. |
-| [`arkiv-indexing`](skills/arkiv-indexing/SKILL.md) | Builds Arkiv-to-app projections; incompatible ingestion packages stay gated. |
+| [`arkiv-indexing`](skills/arkiv-indexing/SKILL.md) | Builds Arkiv-to-app projections and explains the separate EVM-to-Arkiv sync package. |
 | [`arkiv-feedback`](skills/arkiv-feedback/SKILL.md) | Prepares sanitized bug/feature reports and submits only with authorization. |
 | [`arkiv-mcp`](skills/arkiv-mcp/SKILL.md) | Documents read-only profiles and tool/schema checks for an existing connection. |
 | [`arkiv-best-practices`](skills/arkiv-best-practices/SKILL.md) | Deprecated compatibility entrypoint; start with arkiv. |
+
+The library guides cover published `arkiv-chunking@0.1.1`, `arkiv-images@0.1.2`, `arkiv-sync@0.3.0` and `create-arkiv-sync@0.3.0`, verified with SDK 0.8.1. Read their installed agent guides and the relevant skill for configuration, tested scope and recovery limits.
 
 ## Installation
 
@@ -115,3 +117,9 @@ Host formats: [Claude Code](https://code.claude.com/docs/en/plugins-reference), 
 Licensed under [MIT](LICENSE).
 
 <!-- arkiv-install:end -->
+
+## Maintainer SDK compatibility
+
+After installing the pinned verification dependencies with `npm ci --prefix tests/snippets --ignore-scripts --no-audit --no-fund`, run `node --test tests/snippets/sdk-compatibility.test.mjs`. CI also runs `node scripts/check-sdk-compatibility.mjs /absolute/path/sdk-compatibility.json`: a published SDK version outside the declared supported range fails CI. Unavailable or malformed registry metadata produces a nonzero operational result rather than an invented compatibility verdict.
+
+The source watcher shares the canonical SemVer parser. Its health evidence remains separate: new, unverified SDK versions or cited documentation changes require re-verification and keep affected skills yellow; only a current observed failure makes them red. The compatibility diagnostic is not a health report and does not add an eighth producer.

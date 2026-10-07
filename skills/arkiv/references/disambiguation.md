@@ -2,7 +2,7 @@
 
 | Values | Meaning and consequence |
 | --- | --- |
-| Entity key / transaction hash | Both look like 32-byte hex. A key identifies an entity; a hash identifies a transaction that may contain many entity operations. Use returned keys for queries and hashes for receipt reconciliation. |
+| Entity key / transaction hash | Both look like 32-byte hex. A key identifies an entity; a hash identifies a transaction that may contain many entity operations. Use returned keys for queries and hashes for receipt reconciliation. Determine absence from the actual query response; do not infer it from the identifier shape. |
 | Owner / creator | Owner controls current mutations and changes on transfer. Creator is immutable provenance of initial creation, not the author of every later mutable payload. Scope trusted publishers by creator and validate update policy. |
 | Attributes / payload | Attributes are typed indexed values. Payload is opaque bytes with a MIME type. Both are public; payload encryption leaves attributes visible. |
 | Block / timestamp | `expiresAt`, `createdAt` and `updatedAt` are blocks. An application `created_at: u64(Date.now())` is milliseconds. Convert intentionally; never compare them as if they share a unit. |

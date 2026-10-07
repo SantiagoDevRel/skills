@@ -635,6 +635,44 @@
         "skills/arkiv/SKILL.md",
         "skills/arkiv-first-write/SKILL.md"
       ]
+    },
+    {
+      "id": "arkiv-entity-lifecycle-acceptance-readonly-typo",
+      "skill": "arkiv-entity-lifecycle",
+      "category": "outcome",
+      "sources": [
+        "skills/arkiv/SKILL.md",
+        "skills/arkiv-entity-lifecycle/SKILL.md"
+      ]
+    },
+    {
+      "id": "arkiv-entity-lifecycle-acceptance-anyone-keepalive",
+      "skill": "arkiv-entity-lifecycle",
+      "category": "outcome",
+      "sources": [
+        "skills/arkiv/SKILL.md",
+        "skills/arkiv-entity-lifecycle/SKILL.md",
+        "skills/arkiv-entity-expiration/SKILL.md"
+      ]
+    },
+    {
+      "id": "arkiv-entity-lifecycle-acceptance-transfer-authorship",
+      "skill": "arkiv-entity-lifecycle",
+      "category": "outcome",
+      "sources": [
+        "skills/arkiv/SKILL.md",
+        "skills/arkiv-entity-lifecycle/SKILL.md",
+        "skills/arkiv-security-trust/SKILL.md"
+      ]
+    },
+    {
+      "id": "arkiv-entity-lifecycle-acceptance-patch-delete",
+      "skill": "arkiv-entity-lifecycle",
+      "category": "outcome",
+      "sources": [
+        "skills/arkiv/SKILL.md",
+        "skills/arkiv-entity-lifecycle/SKILL.md"
+      ]
     }
   ]
 }

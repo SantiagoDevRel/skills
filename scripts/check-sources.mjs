@@ -3,6 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { repositoryRoot } from './build-plugin.mjs';
 import { readSnippets, sha256 } from './extract-snippets.mjs';
+import { supportedSdkVersion } from './sdk-version-range.mjs';
 
 export function semanticPage(text) {
   const main = /<main\b[^>]*>([\s\S]*?)<\/main>/i.exec(text)?.[1];
@@ -75,10 +76,7 @@ export async function checkSources({root = repositoryRoot, request = fetch} = {}
     const release = JSON.parse(await get('https://registry.npmjs.org/@arkiv-network%2Fsdk/latest', request)); latest = release.version;
     if (latest !== baseline.sdk.version || release.dist?.integrity !== baseline.sdk.integrity) for (const skill of skills) changed.add(skill);
     evidence.push({url: 'https://registry.npmjs.org/@arkiv-network%2Fsdk/latest', version: latest, integrity: release.dist?.integrity});
-    const [major, minor, patch] = latest.split('.').map(Number);
-    const range = /^>=(\d+)\.(\d+)\.(\d+) <(\d+)\.(\d+)$/.exec(config.sdkRange);
-    const numeric = parts => parts[0] * 1000000 + parts[1] * 1000 + parts[2];
-    const supported = range && numeric([major, minor, patch]) >= numeric(range.slice(1, 4).map(Number)) && numeric([major, minor, patch]) < numeric([...range.slice(4).map(Number), 0]);
+    const supported = supportedSdkVersion(latest, config.sdkRange, {root});
     if (supported) {
       const metadata = JSON.parse(await get(`https://unpkg.com/@arkiv-network/sdk@${latest}/package.json`, request));
       const imports = usedSdkExports(snippets);

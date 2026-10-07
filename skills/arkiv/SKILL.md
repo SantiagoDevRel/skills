@@ -15,11 +15,11 @@ Use native SDK operations and indexed queries. This guide covers **Tiramisu and 
 
 ## Start with the source and the task
 
-Read the project's installed SDK version and declarations before writing calls. Prefer [official Arkiv documentation](https://docs.arkiv.network), the versioned SDK implementation/declarations and observed RPC responses over generic Ethereum examples. If docs and live behavior differ, record the version and reproduce the difference without broadcasting.
+When starting an Arkiv project, inspect its package manifest, lockfile and installed SDK declarations with read-only tools, even for a guidance-only request. Report the observed version or which local evidence was unavailable. Prefer [official Arkiv documentation](https://docs.arkiv.network), the versioned SDK implementation/declarations and observed RPC responses over generic Ethereum examples. If docs and live behavior differ, record the version and reproduce the difference without broadcasting.
 
-If the installed version or declarations are unavailable, obtain that local evidence before producing executable SDK code. Do not guess exports or subpaths and attach an "unverified" warning to runnable client setup. For SDK 0.8.1, transport and account utilities come from `viem` and `viem/accounts`; use the source-checked first-write example after compatibility is established.
+If the installed version or declarations are unavailable, ask for that local evidence before producing executable SDK code. An "unverified" label does not make guessed exports or runnable client setup acceptable. For SDK 0.8.1, transport and account utilities come from `viem` and `viem/accounts`; use the source-checked first-write example after compatibility is established.
 
-Load only the task skill and references the request needs. An exact error or a failing operation goes to `arkiv-troubleshooting` first; a healthy query design goes to `arkiv-query`.
+Load only the task skill and references the request needs. For initial setup or a first entity, load `arkiv-first-write`, including when explaining the workflow without executing it. An exact error, failing operation or RPC configuration/URL validation goes to `arkiv-troubleshooting` first; a healthy query design goes to `arkiv-query`.
 
 | Task | Skill |
 | --- | --- |

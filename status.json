@@ -1,63 +1,63 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-06T15:48:53.285Z",
+  "generatedAt": "2026-10-07T04:08:32.874Z",
   "maxAgeHours": 48,
   "defaultNetwork": "tiramisu",
   "sdkVerified": "0.8.1",
-  "catalogHash": "75dd75b0127d8306fb88cf6a50ace2648157be7a8e9878117c2eebd87a66e604",
-  "sourceCommit": "bd5d2a38fe0e712e04b1df51cc3227c848798ce2",
+  "catalogHash": "ef920f4f27bc9a85b9a61eec14deee893ea65685e5722a8ac8716b08350f03c8",
+  "sourceCommit": "df841769c0bd92b1a425ca332be2e98b4663185b",
   "observation": {
     "workflow": "nightly",
     "repository": "SantiagoDevRel/skills",
-    "runId": "37490583054",
+    "runId": "37569995839",
     "runAttempt": "1",
     "event": "workflow_dispatch",
     "ref": "refs/heads/main",
-    "commit": "bd5d2a38fe0e712e04b1df51cc3227c848798ce2",
-    "url": "https://github.com/SantiagoDevRel/skills/actions/runs/37490583054"
+    "commit": "df841769c0bd92b1a425ca332be2e98b4663185b",
+    "url": "https://github.com/SantiagoDevRel/skills/actions/runs/37569995839"
   },
   "reports": [
     {
       "kind": "static",
-      "checkedAt": "2026-10-06T15:48:49.224Z",
+      "checkedAt": "2026-10-07T04:08:27.800Z",
       "result": "PASS",
-      "sha256": "3a0871f7e0f542aab43d5a81cf1d2c2c82eea81c529df314abb954bbb14d5fc1"
+      "sha256": "7ca1e5bd0e95cdd1eb867d3b532547f55e83a6210213b60a29fe4dfa2aec7d84"
     },
     {
       "kind": "typecheck",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "result": "PASS",
-      "sha256": "92ceb3651812231afd8618c9c09c5f1e17ae9a1bf89de0121d0293e099981883"
+      "sha256": "8bbea46f3edb7b7c86e985d50a2e75c3c678d0a63b52fe10b86e2fa8c5c8c907"
     },
     {
       "kind": "runtime",
-      "checkedAt": "2026-10-06T15:48:48.263Z",
+      "checkedAt": "2026-10-07T04:08:26.875Z",
       "result": "PASS",
-      "sha256": "b6ecf949a88fa205e3b66e8251b90d4fc98392843aaf18e3921db77ca89e07c0"
+      "sha256": "2d33f89a84aaf47bc3ea387ebcd82dc38082dbc64f7cdd6f58105e582ff72ef9"
     },
     {
       "kind": "sources",
-      "checkedAt": "2026-10-06T15:48:52.874Z",
+      "checkedAt": "2026-10-07T04:08:32.577Z",
       "result": "PASS",
-      "sha256": "481890a76305205117b10af0874935e5f263b4bcccebfc0af066e1808268d76c"
+      "sha256": "3e15a9e45fe1af0450ea06dd7dd7b076228b686d83cc62c040fb2677f5048be2"
     },
     {
       "kind": "live",
-      "checkedAt": "2026-10-06T15:48:53.226Z",
+      "checkedAt": "2026-10-07T04:08:32.836Z",
       "result": "SKIPPED",
-      "sha256": "ce667b38bf0df15f01528b1b770edef652b455a63d73a8ecd3a9fe029011e014"
+      "sha256": "c4c5410fe5ecd0bc1e03bf3c5a4e346f31a56c3b482c67f414f8da914ca09781"
     },
     {
       "kind": "mcp",
-      "checkedAt": "2026-10-06T15:48:52.959Z",
+      "checkedAt": "2026-10-07T04:08:32.640Z",
       "result": "SKIPPED",
-      "sha256": "09781e5d3433c74545459d32f8a9b225609acc326b3c86b5293f411c2e976e8d"
+      "sha256": "e1956d466e8de0a46ae5b1d308a1566d369271bfc6faf4aace30721bba76f110"
     },
     {
       "kind": "evals",
-      "checkedAt": "2026-10-06T15:48:53.016Z",
+      "checkedAt": "2026-10-07T04:08:32.680Z",
       "result": "SKIPPED",
-      "sha256": "db0633f7744eef710a81fd3d34df65259d79e5db66ddfb63bced36225db5ead6"
+      "sha256": "d0e04253b9c1d7d12d9e9800a31100c5a6f4f3946f9a6177025a34aa9b8a3839"
     }
   ],
   "skills": {
@@ -65,7 +65,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -77,7 +77,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -99,7 +99,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -111,7 +111,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -123,7 +123,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -135,7 +135,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -147,7 +147,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -159,7 +159,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -171,7 +171,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -183,7 +183,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -195,7 +195,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -207,7 +207,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -219,7 +219,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -231,7 +231,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -243,7 +243,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",
@@ -255,7 +255,7 @@
       "status": "yellow",
       "sdkVerified": "0.8.1",
       "network": "tiramisu",
-      "checkedAt": "2026-10-06T15:48:47.693Z",
+      "checkedAt": "2026-10-07T04:08:26.557Z",
       "failing": [],
       "pending": [
         "live: Funded testing was not opted in",

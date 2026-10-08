@@ -60,7 +60,8 @@ export type OperationRecord = {
 export type DurablePostWriter = {
   executeCreate(input: { actorId: string; operationId: string; fingerprint: string;
     parameters: CreateEntityParameters }): Promise<OperationRecord | { phase: "conflict" }>
-  getStatus(actorId: string, operationId: string): Promise<OperationRecord | null>
+  getStatus(actorId: string, operationId: string, fingerprint: string):
+    Promise<OperationRecord | { phase: "conflict" } | null>
 }
 type Dependencies = {
   authenticate(request: Request): Promise<Actor | null>
@@ -118,7 +119,8 @@ export function createPostEndpoint(deps: Dependencies) {
     } catch {
       // Read the durable record only. Never make a second create to repair this response.
       try {
-        const saved = await deps.operations.getStatus(actor.id, operationId)
+        const saved = await deps.operations.getStatus(actor.id, operationId, fingerprint)
+        if (saved?.phase === "conflict") return new Response("Operation ID already has different input", { status: 409 })
         if (saved) return Response.json(operationDto(operationId, saved), { status: saved.phase === "confirmed" ? 200 : 202 })
       } catch {}
       return Response.json({ operationId, phase: "needs_reconciliation" }, { status: 202 })
@@ -134,7 +136,7 @@ export function createPostEndpoint(deps: Dependencies) {
 }
 ```
 
-Implement `DurablePostWriter` before enabling the endpoint. It must atomically bind `(actorId, operationId)` to the fingerprint, configured chain and signer; identical retries return the existing record, and changed input returns `conflict`. Serialize **all** writers sharing that signer across processes. Persist the frozen intent, nonce and signed bytes/hash durably before forwarding a broadcast; update confirmation only after receipt/readback verification. A crash, absent hash or uncertain receipt must remain reconcilable and must never admit a second create. Use the [resumable importer](../../arkiv-write-safety/references/resumable-import.md) as the concrete single-row job foundation; the application still supplies its durable operation registry and authorization adapter. Do not implement these callbacks as a fresh `createEntity()` on every call.
+Implement `DurablePostWriter` before enabling the endpoint. Both `executeCreate` and the read-only `getStatus` compare the supplied fingerprint with the durable binding before returning a record; changed input returns `conflict`, including after an execution failure. Atomically bind `(actorId, operationId)` to the fingerprint, configured chain and signer; identical retries return the existing record. Serialize **all** writers sharing that signer across processes. Persist the frozen intent, nonce and signed bytes/hash durably before forwarding a broadcast; update confirmation only after receipt/readback verification. A crash, absent hash or uncertain receipt must remain reconcilable and must never admit a second create. Use the [resumable importer](../../arkiv-write-safety/references/resumable-import.md) as the concrete single-row job foundation; the application still supplies its durable operation registry and authorization adapter. Do not implement these callbacks as a fresh `createEntity()` on every call.
 
 The client generates one operation ID before its first request, retains it across timeouts and retries, and displays the returned phase and any known key/hash. A `202` is an unresolved operation, not permission to create under a new ID. Invalid/oversized attempts consume the abuse limit; validated requests additionally consume the write limit. `str(actor.id)` rejects C0/DEL and more than 128 UTF-8 bytes without truncating identity. Provider errors never become API response bodies.
 

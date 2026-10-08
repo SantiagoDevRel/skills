@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import {mkdtemp, readFile, writeFile, open, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import { ExpirationTime, EntityMutationError, Entity, createPublicClient, createWalletClient, jsonToPayload } from '@arkiv-network/sdk';
+import { ExpirationTime, EntityMutationError, Entity, ENTITY_EVENTS_ABI, createPublicClient, createWalletClient, jsonToPayload } from '@arkiv-network/sdk';
 import { bool, i32, u64, u256, dec, bytes32, str, addr, key as entityKey } from '@arkiv-network/sdk/attr';
 import { QueryError } from '@arkiv-network/sdk/query';
-import {custom, keccak256, ContractFunctionRevertedError, encodeErrorResult, parseAbi} from 'viem';
+import {custom, keccak256, ContractFunctionRevertedError, encodeErrorResult, encodeEventTopics, parseAbi} from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { generateKey, importKey } from 'arkiv-encryption';
 import { makeFixture } from './rpc-fixture.mjs';
@@ -43,6 +43,21 @@ export async function run({load, snippets}) {
     await assert.rejects(first.ensureFirstNote(account, 'https://fixture.invalid'), /Fund the signer/);
     await assert.rejects(first.ensureFirstNote(account, 'https://fixture.invalid', {id: 1}), /Wrong chain/);
     assert.equal(fixture.sends.length, 0);
+  });
+  await test('first-write-positive-balance-below-fee-cap-stops-before-signing', [firstId], async () => {
+    const signer = privateKeyToAccount(generatePrivateKey()); let signatures = 0, estimates = 0;
+    const account = {...signer, signTransaction: async input => {signatures++; return signer.signTransaction(input);}};
+    const fixture = makeFixture(account.address); globalThis.fetch = fixture.fetch;
+    // 120,000 gas after the helper's margin. This covers the fixture's 1-wei gas price,
+    // but not its 2-wei EIP-1559 maximum fee, so checking only a positive balance is unsafe.
+    fixture.balance = 200000n;
+    const options = {estimateGas: async () => {estimates++; return 100000n;}};
+    await assert.rejects(first.ensureFirstNote(account, 'https://fixture.invalid', fixture.reader.chain, options), /Insufficient funds.*fee cap/);
+    assert.equal(estimates, 1); assert.equal(signatures, 0); assert.equal(fixture.sends.length, 0);
+    assert.ok(!fixture.methods.some(method => method.startsWith('eth_send')));
+    fixture.balance = 240000n; // Exact gas * maximum-fee boundary must remain usable.
+    assert.equal((await first.ensureFirstNote(account, 'https://fixture.invalid', fixture.reader.chain, options)).reused, false);
+    assert.equal(signatures, 1); assert.equal(fixture.sends.length, 1);
   });
   const estimateId = id('arkiv-first-write', 'references/estimate.md');
   await test('dry-run-stops-at-gas-estimate-before-any-send', [estimateId, firstId], async () => {
@@ -242,6 +257,24 @@ export async function run({load, snippets}) {
       assert.deepEqual(x.calls, {parse: 1, create: 1}); assert.equal(x.fixture.sends.length, x.before + 1);
     }
   });
+  await test('readonly-replacement-enforces-30-attribute-create-budget-before-create', [lifecycleId], async () => {
+    const x = await replacementFixture();
+    const attributes = Object.fromEntries(Array.from({length: 30}, (_, n) => [`field_${n}`, u64(BigInt(n))]));
+    let creates = 0;
+    const reader = {getEntity: async () => ({...x.original, attributes,
+      toJson: () => ({title: 'Original', body: 'Original body'})})};
+    const wallet = {...x.wallet, createEntity: async input => {creates++; return x.wallet.createEntity(input);}};
+    const accepted = await lifecycle.replaceReadonlyNote(reader, wallet, x.original.key, 'Correction', x.expires);
+    assert.equal(creates, 1); assert.deepEqual((await x.fixture.reader.getEntity(accepted.entityKey)).attributes, attributes);
+    const before = x.fixture.sends.length;
+    for (const count of [31, 32, 33]) {
+      const wide = {...attributes, ...Object.fromEntries(Array.from({length: count - 30}, (_, n) => [`extra_${n}`, u64(BigInt(n))]))};
+      reader.getEntity = async () => ({...x.original, attributes: wide,
+        toJson: () => ({title: 'Original', body: 'Original body'})});
+      await assert.rejects(lifecycle.replaceReadonlyNote(reader, wallet, x.original.key, 'Correction', x.expires), /fit 30 user attributes/);
+      assert.equal(creates, 1); assert.equal(x.fixture.sends.length, before);
+    }
+  });
   const queryId = id('arkiv-query'); const query = await load(queryId);
   await test('query-cursor-restart-disposes-partial-results-and-budget-fails', [queryId], async () => {
     const fixture = makeFixture(); for (let index = 0; index < 5; index++) await seed(fixture, {project: 'example_marketplace', entity_type: 'listing', active: true, price_minor: u256(BigInt(index))});
@@ -270,6 +303,41 @@ export async function run({load, snippets}) {
     deps.authenticate = async () => ({id: 'actor'});
     assert.equal((await server.createPostEndpoint(deps)(new Request('https://fixture.invalid', {method: 'POST', body: '{}'}))).status, 400); assert.equal(sends, 0);
     assert.equal(server.postDto({key: publicKey(1), expiresAt: 5000n, toJson: () => ({title: 'safe', content: 'untrusted text', arkivEntityKey: publicKey(9)})}).arkivEntityKey, publicKey(1));
+  });
+  await test('server-thrown-write-fallback-binds-fingerprint-without-resending-or-leaking-old-result', [serverId], async () => {
+    const operationId = 'stable_operation_0001', post = {title: 'Original', content: 'Original body'};
+    const actorId = 'actor'; let fingerprint, executeCalls = 0, statusCalls = 0, creates = 0;
+    let saved = {phase: 'confirmed', entityKey: publicKey(11), txHash: publicKey(12), expiresAt: 5000n};
+    const deps = {authenticate: async () => ({id: actorId}), authorize: async () => true,
+      csrf: async () => true, allowAttempt: async () => true, allowWrite: async () => true,
+      operations: {
+        executeCreate: async input => {
+          executeCalls++; assert.equal(input.actorId, actorId); assert.equal(input.operationId, operationId);
+          if (!fingerprint) {fingerprint = input.fingerprint; creates++; return saved;}
+          throw new Error('Synthetic durable-writer response loss');
+        },
+        getStatus: async (actor, operation, requestedFingerprint) => {
+          statusCalls++; assert.equal(actor, actorId); assert.equal(operation, operationId);
+          assert.equal(typeof requestedFingerprint, 'string');
+          return requestedFingerprint === fingerprint ? saved : {phase: 'conflict'};
+        },
+      }};
+    const endpoint = server.createPostEndpoint(deps);
+    const request = value => new Request('https://fixture.invalid', {method: 'POST',
+      headers: {'Idempotency-Key': operationId, 'Content-Type': 'application/json'}, body: JSON.stringify(value)});
+    assert.equal((await endpoint(request(post))).status, 201);
+    const conflict = await endpoint(request({...post, content: 'Edited body'}));
+    assert.equal(conflict.status, 409); const conflictBody = await conflict.text();
+    assert.ok(!conflictBody.includes(saved.entityKey) && !conflictBody.includes(saved.txHash));
+    const confirmed = await endpoint(request(post)); assert.equal(confirmed.status, 200);
+    assert.equal((await confirmed.json()).arkivEntityKey, saved.entityKey);
+    for (const phase of ['prepared', 'submitting', 'needs_reconciliation']) {
+      saved = {phase}; const response = await endpoint(request(post)); assert.equal(response.status, 202);
+      assert.deepEqual(await response.json(), {operationId, phase}); assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    }
+    saved = null; const missing = await endpoint(request(post)); assert.equal(missing.status, 202);
+    assert.deepEqual(await missing.json(), {operationId, phase: 'needs_reconciliation'});
+    assert.equal(executeCalls, 7); assert.equal(statusCalls, 6); assert.equal(creates, 1);
   });
   const trustId = id('arkiv-security-trust', 'references/trust-boundary.md');
   await test('publication-rejects-untrusted-or-mutable-creators-and-preserves-chain-key', [trustId], async () => {
@@ -329,6 +397,27 @@ export async function run({load, snippets}) {
     await assert.rejects(payload.readEncryptedNote({...entity, contentType: 'application/json'}, key, owner), /Unsupported/);
     await assert.rejects(payload.readEncryptedNote(entity, await importKey(generateKey()), owner));
   });
+  for (const [attack, change, pattern] of [
+    ['incoming-attacker-copy', {creator: attacker}, /Untrusted encrypted publication creator/],
+    ['mutable-trusted-creator', {creationFlags: {readonly: false, permissionlessExtension: false}}, /mutable/],
+  ]) await test(`encrypted-publication-${attack}-is-rejected-before-decrypt`, [payloadId], async () => {
+    const payload = await load(payloadId), key = await importKey(generateKey()), fixture = makeFixture();
+    const created = await payload.writeEncryptedNote(fixture.wallet, key, {text: 'Synthetic secret'});
+    const entity = await fixture.reader.getEntity(created.entityKey), subtle = globalThis.crypto.subtle;
+    const descriptor = Object.getOwnPropertyDescriptor(subtle, 'decrypt'), decrypt = subtle.decrypt;
+    let decrypts = 0;
+    Object.defineProperty(subtle, 'decrypt', {configurable: true, writable: true,
+      value: function (...args) {decrypts++; return decrypt.apply(this, args);}});
+    try {
+      await assert.rejects(payload.readEncryptedNote({...entity, ...change, owner}, key, owner), pattern);
+      assert.equal(decrypts, 0);
+      assert.equal((await payload.readEncryptedNote(entity, key, owner)).arkivEntityKey, entity.key);
+      assert.equal(decrypts, 1); // Prove this probe observes the real library decryption path.
+    } finally {
+      if (descriptor) Object.defineProperty(subtle, 'decrypt', descriptor);
+      else Reflect.deleteProperty(subtle, 'decrypt'); // Retire only the property this fixture created.
+    }
+  });
   const largeId = id('arkiv-large-files');
   await test('external-pointer-byte-hash-and-origin-token-guards', [largeId], async () => {
     const large = await load(largeId), bytes = new Uint8Array([1, 2, 3]); const pointer = await large.prepareExternalPointer(bytes, 'https://blob.example/object', 'image/png', 5000n, new Set(['https://blob.example']));
@@ -386,6 +475,44 @@ export async function run({load, snippets}) {
     assert.deepEqual(seen, [1]); assert.equal(errors.length, 1); stop(); callbacks.onEvent({index: 3});
     await new Promise(resolve => setImmediate(resolve)); assert.equal(stopped, true); assert.deepEqual(seen, [1]);
   });
+  const replayId = id('arkiv-app-integration', 'references/realtime.md', 2);
+  for (const [signal, capacityError, expectedAttempts] of [
+    ['tiramisu-result-cap', () => ({code: -32602, message: 'query exceeds max results 20000, retry with the range 1-2'}), [[1n, 8n], [1n, 2n]]],
+    ['viem-body-cap-without-code', () => Object.assign(new Error('Response body exceeds its size bound'), {name: 'ResponseBodyTooLargeError'}), [[1n, 8n], [1n, 4n], [1n, 2n]]],
+  ]) await test(`replay-${signal}-reduces-range-without-skips-or-duplicates`, [replayId], async () => {
+    const replay = await load(replayId), attempts = [], applied = [], seen = [];
+    const reader = {getBlockNumber: async () => 8n, getBlock: async ({blockNumber}) => ({hash: publicKey(blockNumber)}),
+      getLogs: async ({fromBlock, toBlock}) => {
+        attempts.push([fromBlock, toBlock]);
+        if (toBlock - fromBlock + 1n > 2n) throw new Error('Provider wrapper', {cause: capacityError()});
+        const rows = Array.from({length: Number(toBlock - fromBlock + 1n)}, (_, index) => {
+          const blockNumber = fromBlock + BigInt(index);
+          return {address: '0x4400000000000000000000000000000000000044', blockNumber,
+            blockHash: publicKey(blockNumber), transactionHash: publicKey(blockNumber + 100n), logIndex: 0,
+            removed: false, data: '0x', topics: encodeEventTopics({abi: ENTITY_EVENTS_ABI,
+              eventName: 'EntityPatched', args: {entityKey: publicKey(blockNumber + 200n), owner}})};
+        });
+        return [...rows, ...rows].reverse();
+      }};
+    const result = await replay.replayEntityRanges(reader, {blockNumber: 0n, blockHash: publicKey(0)}, async range => {
+      applied.push([range.fromBlock, range.checkpoint.blockNumber]);
+      seen.push(...range.logs.map(log => log.blockNumber));
+    }, {chunkBlocks: 8n});
+    assert.deepEqual(attempts.slice(0, expectedAttempts.length), expectedAttempts);
+    assert.deepEqual(applied, [[1n, 2n], [3n, 4n], [5n, 6n], [7n, 8n]]);
+    assert.deepEqual(seen, Array.from({length: 8}, (_, n) => BigInt(n + 1)));
+    assert.equal(result.complete, true); assert.deepEqual(result.checkpoint, {blockNumber: 8n, blockHash: publicKey(8)});
+  });
+  await test('replay-quota-and-single-block-capacity-preserve-durable-progress', [replayId], async () => {
+    const replay = await load(replayId);
+    for (const error of [{status: 429, message: 'Quota exhausted'}, {code: -32602, message: 'query exceeds max results 20000'}]) {
+      let reads = 0, commits = 0;
+      const reader = {getBlockNumber: async () => 1n, getBlock: async ({blockNumber}) => ({hash: publicKey(blockNumber)}),
+        getLogs: async () => {reads++; throw error;}};
+      await assert.rejects(replay.replayEntityRanges(reader, {blockNumber: 0n, blockHash: publicKey(0)}, async () => {commits++;}), received => received === error);
+      assert.equal(reads, 1); assert.equal(commits, 0);
+    }
+  });
   const readerId = id('arkiv-app-integration', 'references/server-boundary.md', 2);
   await test('server-reader-requires-header-key-without-broadcast-on-construction', [readerId], async () => {
     const reader = await load(readerId); assert.throws(() => reader.createServerReader(''), /Missing/);
@@ -402,6 +529,22 @@ export async function run({load, snippets}) {
     const backup = await load(backupId); const fixture = makeFixture(); for (let index = 0; index < 3; index++) await seed(fixture);
     const captured = await backup.captureSnapshot(fixture.reader, 'expiration-test', owner); assert.equal(captured.entities.length, 3); assert.doesNotThrow(() => JSON.stringify(captured));
     fixture.cursorExpiresOnce = true; await assert.rejects(backup.captureSnapshot(fixture.reader, 'expiration-test', owner), error => error instanceof QueryError && error.kind === 'cursor');
+  });
+  const restoreId = id('arkiv-entity-lifecycle', 'references/backup-restore.md', 2);
+  await test('restore-partition-retains-all-32-typed-attributes-and-rejects-unrepresentable-plans', [restoreId], async () => {
+    const restore = await load(restoreId);
+    const values = Object.values(noteAttributes);
+    for (const count of [30, 31, 32]) {
+      const attributes = Object.fromEntries(Array.from({length: count}, (_, n) => [`field_${n}`, values[n % values.length]]));
+      const plan = restore.planRestoredAttributes(attributes, false);
+      assert.equal(Object.keys(plan.createAttributes).length, 30);
+      assert.equal(Object.keys(plan.patchAttributes).length, count - 30);
+      assert.deepEqual({...plan.createAttributes, ...plan.patchAttributes}, attributes);
+      if (count === 32) assert.deepEqual(plan.patchAttributes.field_31, attributes.field_31);
+      if (count === 30) assert.deepEqual(restore.planRestoredAttributes(attributes, true).createAttributes, attributes);
+      else assert.throws(() => restore.planRestoredAttributes(attributes, true), /Readonly restoration/);
+    }
+    assert.throws(() => restore.planRestoredAttributes(Object.fromEntries(Array.from({length: 33}, (_, n) => [`field_${n}`, u64(BigInt(n))])), false), /exceeds 32/);
   });
   const rawId = id('arkiv-query', 'references/json-rpc.md');
   await test('raw-estimate-request-uses-native-destination-and-shared-ABI', [rawId], async () => {

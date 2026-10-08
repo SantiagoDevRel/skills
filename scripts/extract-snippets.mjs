@@ -17,7 +17,7 @@ async function markdownFiles(root, directory = 'skills') {
   return files;
 }
 
-export function fencedSnippets(text, file) {
+export function fencedSnippets(text, file, {languages = ['ts', 'typescript', 'tsx']} = {}) {
   const blocks = [];
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   let active;
@@ -32,7 +32,7 @@ export function fencedSnippets(text, file) {
     }
     const closing = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(lines[index]);
     if (closing && closing[1][0] === active.marker && closing[1].length >= active.length) {
-      if (['ts', 'typescript', 'tsx'].includes(active.language)) {
+      if (languages.includes(active.language)) {
         const source = active.lines.join('\n') + '\n';
         const skip = /^\s*\/\/ arkiv-snippet: skip\s*[—-]\s*(.+)$/m.exec(source);
         blocks.push({id: `${file}#${++ordinal}`, file, line: active.line, language: active.language,
@@ -41,18 +41,18 @@ export function fencedSnippets(text, file) {
       active = undefined;
     } else active.lines.push(lines[index]);
   }
-  if (active && ['ts', 'typescript', 'tsx'].includes(active.language)) throw new Error(`Unclosed TypeScript fence: ${file}:${active.line - 1}`);
+  if (active && languages.includes(active.language)) throw new Error(`Unclosed executable fence: ${file}:${active.line - 1}`);
   return blocks;
 }
 
-export async function readSnippets(root = repositoryRoot) {
+export async function readSnippets(root = repositoryRoot, options = {}) {
   const snippets = [];
   const files = [];
   for (const file of await markdownFiles(root)) {
     const bytes = await readFile(path.join(root, file));
     const text = new TextDecoder('utf-8', {fatal: true}).decode(bytes);
     files.push({file, sha256: sha256(bytes)});
-    snippets.push(...fencedSnippets(text, file));
+    snippets.push(...fencedSnippets(text, file, options));
   }
   return {files, snippets};
 }

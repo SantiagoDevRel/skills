@@ -28,8 +28,6 @@ The library guides cover published `arkiv-chunking@0.1.1`, `arkiv-images@0.1.2`,
 
 ## Installation
 
-This branch is a release preview. The official repository commands below require the plugin and focused skills to be merged into the upstream default branch. For local review, use this checkout with the host's local-plugin loader.
-
 <!-- arkiv-install:start -->
 
 ### Full plugin

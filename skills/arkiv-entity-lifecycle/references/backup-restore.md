@@ -1,6 +1,6 @@
 # Backup and restore
 
-A backup is a snapshot of selected live Arkiv entities, not a copy of all historical transactions. Choose the chain, namespace, trusted creator/owner policy, selection, and block before exporting. Preserve that block if a historical query fails; silently restarting at head changes the backup.
+A backup is a snapshot of selected live Arkiv entities, not a copy of all historical transactions. Choose the chain, namespace, creator/provenance policy, selection, and block before exporting. Preserve that block if a historical query fails; silently restarting at head changes the backup.
 
 ## Capture a consistent snapshot
 
@@ -50,12 +50,12 @@ export async function captureSnapshot(
 
 Persist the returned object only after every page succeeds. Keep a manifest with the source network, snapshot block, entity count, payload checksums, format version, and query/trust scope. A snapshot can contain sensitive application data even though the chain data is public; honor the user's chosen destination.
 
-Creator scoping identifies original publishers; transferred mutable content may have been rewritten by its current owner. If the trust policy needs both, apply that policy before treating the snapshot as trusted application content.
+Creator scoping identifies only the original publisher. Neither the current owner nor creator + owner authenticates a mutable payload; see [publication authentication](../../arkiv-security-trust/SKILL.md#trust-a-publication-not-a-namespace). Trust snapshot content only if it is readonly by an allowlisted creator or has a verified signed version or authenticated mutation history. Never restore unauthenticated content under a trusted publisher's signer.
 
 ## Restore new identities and relationships
 
 1. Validate the complete snapshot and every application's payload schema. Rebuild typed attributes using their stored tags; decimal strings, `u64`/`u256`, addresses, and entity keys must not silently become ordinary strings.
-2. Choose authorized signer(s), ownership policy, creation flags, and new deadlines. Original owner/creator/creation block are provenance, not writable system fields. Creates initially belong to the restoring signer; authorized transfers can set the desired owner afterward, but creator remains the restoring signer.
+2. Choose authorized signer(s), destination ownership policy, creation flags, and new deadlines. Historical owner/creator/creation-block metadata does not authenticate mutable payloads and is not writable system data. Restoration signs the copied content under the restoring publisher's identity. Creates initially belong to that signer; authorized transfers can set the desired owner afterward, but creator remains the restoring signer.
 3. Check both budgets: a create carries at most 30 user attributes, while the observed Tiramisu post-patch state ceiling is 32. Restore a mutable 31–32-attribute entity with a create of at most 30 plus a patch of the remaining fields, optionally in one batch using its predicted key. A readonly create cannot be patched later, including within the same batch; preserving readonly and all 31–32 indexed fields is not supported by this route. Reject that plan or agree on a schema with at most 30 attributes and explicitly move selected fields to payload. Preserve provenance in the manifest or payload instead of exceeding either budget.
 4. Build an explicit `oldKey → newKey` map from successful create receipts. Keep transaction hashes and progress after each batch. A partial multi-transaction restore is not an atomic restore; reconcile an uncertain batch before continuing or retrying.
 5. Rewrite typed `key()` relationships and any documented keys inside validated payloads or application indexes. Do not replace every hex-looking string: transaction hashes, addresses, and opaque application IDs are different values.

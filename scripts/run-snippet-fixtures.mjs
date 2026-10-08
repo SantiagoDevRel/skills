@@ -12,7 +12,7 @@ export async function runFixtures({root = repositoryRoot, workspace = path.join(
   const output = path.join(workspace, '.generated', 'runtime-' + new Date().toISOString().replace(/[:.]/g, '-'));
   await mkdir(output, {recursive: true});
   for (const file of ['rpc-fixture.mjs', 'runtime-fixtures.mjs']) await copyFile(path.join(root, 'tests/snippets', file), path.join(output, file));
-  const {files, snippets} = await readSnippets(root);
+  const {files, snippets} = await readSnippets(root, {languages: ['ts', 'typescript', 'tsx', 'js', 'javascript']});
   const modules = new Map();
   const load = async id => {
     if (modules.has(id)) return modules.get(id);
@@ -20,7 +20,8 @@ export async function runFixtures({root = repositoryRoot, workspace = path.join(
     if (!snippet || snippet.skipReason) throw new Error(`Missing or skipped runtime snippet: ${id}`);
     if (snippet.language === 'tsx') throw new Error(`TSX needs a documented browser fixture: ${id}`);
     const file = path.join(output, id.replace(/[^a-zA-Z0-9_-]+/g, '_') + '.mjs');
-    await writeFile(file, stripTypeScriptTypes(snippet.source), {flag: 'wx'});
+    const source = ['js', 'javascript'].includes(snippet.language) ? snippet.source : stripTypeScriptTypes(snippet.source);
+    await writeFile(file, source, {flag: 'wx'});
     const loaded = await import(pathToFileURL(file).href);
     modules.set(id, loaded);
     return loaded;

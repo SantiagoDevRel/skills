@@ -146,11 +146,8 @@ export async function checkStatic(root = repositoryRoot) {
     } catch(error) { add(file, 'frontmatter', error.message); }
   }
   let links = 0;
-  const retained = [];
   for (const [file, text] of texts) {
     const parts = file.split('/');
-    const isRetained = parts[0] === 'skills' && deprecated.has(parts[1]) && parts.length > 3;
-    if (isRetained) retained.push(file);
     if (file.endsWith('.md') || file.endsWith('.mdc')) {
       for (const match of text.matchAll(/!?\[[^\]\n]*\]\(([^)\n]+)\)/g)) {
         const target = match[1].replace(/^<|>$/g, '').split(/\s+["']/)[0];
@@ -162,7 +159,7 @@ export async function checkStatic(root = repositoryRoot) {
         try { await stat(resolved); links++; } catch { add(file, 'relative-link', `Missing local target: ${local}`, lineAt(text, match.index)); }
       }
     }
-    if (!isRetained && /\.(?:md|mdc)$/.test(file)) for (const finding of contentFindings(text)) add(file, finding.rule, 'Disallowed vocabulary, source or example', finding.line);
+    if (/\.(?:md|mdc)$/.test(file)) for (const finding of contentFindings(text)) add(file, finding.rule, 'Disallowed vocabulary, source or example', finding.line);
     if (parts[0] === 'skills' && parts.length > 3 && (parts[2] !== 'references' || parts.length !== 4 || !file.endsWith('.md'))) add(file, 'reference-depth', 'Supporting Markdown references must be one level deep');
     if (/migration-guide\.md|Braga/.test(file)) add(file, 'retired-file', 'Retired migration file found');
     if (parts[0] === 'skills' && !deprecated.has(parts[1]) && /arkiv-best-practices/.test(text)) add(file, 'incoming-deprecated-link', 'Active skills must not reference the deprecated entrypoint');
@@ -172,7 +169,7 @@ export async function checkStatic(root = repositoryRoot) {
   const targets = [...index.matchAll(/\]\((skills\/[^)]+\/SKILL\.md)\)/g)].map(match => match[1]);
   if (targets.length !== entrypoints.length || new Set(targets).size !== entrypoints.length || entrypoints.some(file => !targets.includes(file))) add('README.md', 'readme-index', 'Index must contain every entrypoint exactly once');
   if (!texts.get('LICENSE')?.includes('Permission is hereby granted, free of charge')) add('LICENSE', 'license', 'Expected the MIT license text');
-  return {passed: failures.length === 0, skills: entrypoints.length, activeSkills: entrypoints.length - deprecated.size, relativeLinks: links, retainedReferences: retained, filesChecked: publicFiles.length, failures};
+  return {passed: failures.length === 0, skills: entrypoints.length, activeSkills: entrypoints.length - deprecated.size, relativeLinks: links, filesChecked: publicFiles.length, failures};
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

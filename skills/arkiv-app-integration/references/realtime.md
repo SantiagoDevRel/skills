@@ -52,9 +52,9 @@ On failure, mark the cache unhealthy and reconcile before restarting. Cleanup st
 
 ## Bounded HTTP replay
 
-SDK 0.8.1 delegates `fromBlock` to viem. When `eth_newFilter` is unavailable, the polling fallback requests the whole unprocessed gap with one `eth_getLogs`; a failed request leaves that same gap for the next poll. The audit observed Tiramisu rejecting a gap with about 20,000 logs. That is a provider observation, not a universal block-count limit.
+SDK 0.8.1 delegates `fromBlock` to viem. When `eth_newFilter` is unavailable, the polling fallback requests the whole unprocessed gap with one `eth_getLogs`; a failed request leaves that same gap for the next poll. Tiramisu has returned `-32602 "query exceeds max results 20000, retry with the range a-b"`. viem 2.57.3 also throws `ResponseBodyTooLargeError` with no RPC code when the HTTP response exceeds its default 10,485,760-byte bound. These are distinct server and client capacity signals, not a universal block-count limit.
 
-This example bounds each request to at most 1,000 blocks and halves the range on an explicit capacity error. Even one block can exceed a provider limit: then it stops without advancing, and the consumer needs a narrower event/topic filter or another approved provider. Quota, authentication and unknown errors stop immediately. Configure transport `retryCount: 0` so the application controls retry admission.
+This example bounds each request to at most 1,000 blocks and halves the range on either capacity signal, applying a smaller intersected server hint when available. A hint cannot skip the requested prefix, expand the window or advance progress. Even one block can exceed a capacity bound: then it stops without advancing, and the consumer needs a narrower event/topic filter or another approved provider. Quota, authentication and unknown errors stop immediately. Configure transport `retryCount: 0` so the application controls retry admission.
 
 ```typescript
 import { ENTITY_EVENTS_ABI } from "@arkiv-network/sdk"
@@ -74,12 +74,35 @@ export function isLogCapacityError(error: unknown): boolean {
   let cause = error
   for (let depth = 0; depth < 10 && typeof cause === "object" && cause !== null; depth++) {
     if ("status" in cause && cause.status === 413) return true
+    if ("name" in cause && cause.name === "ResponseBodyTooLargeError") return true
     const message = "message" in cause && typeof cause.message === "string" ? cause.message : ""
-    if (/too many (?:results|logs)|(?:result|response|log|range).*\blimit\b|response.*too large/i.test(message) &&
+    if (/query exceeds max results|too many (?:results|logs)|(?:result|response|log|range).*\blimit\b|response.*too large/i.test(message) &&
         "code" in cause && (cause.code === -32602 || cause.code === -32005 || cause.code === -32004)) return true
     cause = "cause" in cause ? cause.cause : undefined
   }
   return false
+}
+
+function smallerLogSpan(error: unknown, fromBlock: bigint, toBlock: bigint): bigint {
+  const half = (toBlock - fromBlock + 1n) / 2n || 1n
+  let cause = error
+  for (let depth = 0; depth < 10 && typeof cause === "object" && cause !== null; depth++) {
+    const message = "message" in cause && typeof cause.message === "string" ? cause.message : ""
+    if ("code" in cause && cause.code === -32602 && /query exceeds max results/i.test(message)) {
+      const hint = /retry with the range\s+(0x[\da-f]{1,64}|\d{1,78})\s*-\s*(0x[\da-f]{1,64}|\d{1,78})\b/i.exec(message)
+      if (hint) {
+        const start = BigInt(hint[1]), end = BigInt(hint[2])
+        // Only a hint covering our original prefix can reduce this request; never jump forward.
+        if (start <= fromBlock && end >= fromBlock) {
+          const clampedEnd = end < toBlock ? end : toBlock
+          const hintedSpan = clampedEnd - fromBlock + 1n
+          return hintedSpan < half ? hintedSpan : half
+        }
+      }
+    }
+    cause = "cause" in cause ? cause.cause : undefined
+  }
+  return half
 }
 
 export async function replayEntityRanges(reader: ReplayReader, saved: Checkpoint,
@@ -112,7 +135,7 @@ export async function replayEntityRanges(reader: ReplayReader, saved: Checkpoint
         data: log.data, topics: log.topics, strict: true }) }))
     } catch (error) {
       if (!isLogCapacityError(error) || fromBlock === toBlock) throw error
-      span = (toBlock - fromBlock + 1n) / 2n || 1n
+      span = smallerLogSpan(error, fromBlock, toBlock)
       continue
     }
     const unique = new Map<string, EntityLogs[number]>()

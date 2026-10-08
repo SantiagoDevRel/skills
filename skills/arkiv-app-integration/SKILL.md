@@ -5,7 +5,7 @@ license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
   network: tiramisu
-  verified: "2026-10-07"
+  verified: "2026-10-08"
 ---
 
 # Arkiv app integration
@@ -41,7 +41,7 @@ The five SDK events are `EntityCreated`, `EntityPatched`, `ExpiryExtended`, `Own
 - Filter known-key updates and deletions using prior collection membership. Fetch and validate **new** entity keys against namespace and authenticated authorship before including them; known-key-only filtering misses new creates. A transfer into your wallet needs no recipient consent, so current ownership is not provenance. Use the publication gate in `arkiv-security-trust`.
 - Invalidate detail and affected collection caches. Attribute/ownership changes can remove an entity from its previous scope; deletion requires the saved previous scope because a head read cannot fetch the deleted entity.
 - Catch asynchronous handler failures, serialize processing where order matters, and stop the synchronous unwatch function during cleanup. A decoded event is an invalidation signal, not the full updated entity.
-- Replay finite HTTP block ranges from a verified checkpoint; shrink ranges on explicit log/response limits and preserve the checkpoint on failure. Do not pass an old checkpoint directly to `watchEntityEvents({ fromBlock })`: viem's HTTP fallback can repeatedly request the entire gap. Fetch canonical hashes and use `arkiv-indexing` for durable replay/reorg recovery.
+- Replay finite HTTP block ranges from a verified checkpoint. Shrink on `-32602 "query exceeds max results 20000, retry with the range a-b"` or viem's code-free `ResponseBodyTooLargeError`; clamp hints without skipping blocks and preserve the checkpoint on failure. Do not pass an old checkpoint directly to `watchEntityEvents({ fromBlock })`: viem's HTTP fallback can repeatedly request the entire gap. Fetch canonical hashes and use `arkiv-indexing` for durable replay/reorg recovery.
 - Periodically refetch or sweep actual expiration blocks against chain head. An idle event stream does not prove a healthy connection or an unexpired cache.
 
 Read [realtime.md](references/realtime.md) when implementing events, replay, checkpoints or expiration-aware caches.

@@ -78,6 +78,12 @@ export async function replaceReadonlyNote(
   if (!wallet.account || !isAddressEqual(wallet.account.address, old.owner)) {
     throw new Error("The connected wallet must own the note")
   }
+  if (!isAddressEqual(old.creator, wallet.account.address)) {
+    throw new Error("Only replace a note created by this publisher")
+  }
+  if (old.contentType !== "application/json") {
+    throw new Error("Expected application/json")
+  }
   const note: unknown = old.toJson()
   if (typeof note !== "object" || note === null ||
       !("body" in note) || typeof note.body !== "string") {
@@ -173,7 +179,7 @@ export async function createRelatedNotes(reader: Reader, wallet: Wallet) {
 }
 ```
 
-The replacement preserves the example note's body and attributes. Adapt its parser to the real schema; it deliberately does not copy arbitrary unvalidated JSON. Repoint application references using the returned `replaces`/`entityKey` mapping. A recreated entity's creator and creation block belong to the new write; preserve old provenance separately when needed.
+The replacement accepts only this publisher's readonly JSON notes before parsing. Ownership authorizes the write; it does not authenticate content transferred in from another creator. Adapt the parser to the real schema. The new transaction signs the copied body and attributes under the connected publisher's identity; never republish unauthenticated content under a trusted signer. Repoint application references using the returned `replaces`/`entityKey` mapping and preserve old provenance separately. For other trust policies, use [publication authentication](../arkiv-security-trust/SKILL.md#trust-a-publication-not-a-namespace).
 
 Transfer inspection is a subsequent head read. Later transactions can change ownership or remove the entity before that read. Inspect the confirmed receipt and later operations before retrying; a read failure is not proof transfer failed.
 

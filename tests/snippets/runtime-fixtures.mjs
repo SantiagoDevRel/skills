@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import {mkdtemp, readFile, writeFile, open, rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
 import { ExpirationTime, EntityMutationError } from '@arkiv-network/sdk';
-import { u256 } from '@arkiv-network/sdk/attr';
+import { u64, u256 } from '@arkiv-network/sdk/attr';
 import { QueryError } from '@arkiv-network/sdk/query';
+import {keccak256} from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { generateKey, importKey } from 'arkiv-encryption';
 import { makeFixture } from './rpc-fixture.mjs';
@@ -9,7 +13,6 @@ import { makeFixture } from './rpc-fixture.mjs';
 const id = (skill, reference = 'SKILL.md', block = 1) => `skills/${skill}/${reference}#${block}`;
 const publicKey = number => '0x' + BigInt(number).toString(16).padStart(64, '0');
 const owner = '0x1111111111111111111111111111111111111111';
-const rows = count => Array.from({length: count}, (_, index) => ({id: `row-${index}`, body: `Synthetic ${index}`}));
 const seed = (fixture, attributes = {project: 'expiration-test'}, expires = ExpirationTime.fromHours(1)) => fixture.wallet.createEntity({payload: new Uint8Array(), contentType: 'application/octet-stream', attributes, expires});
 const safeError = error => String(error.shortMessage || error.message || error).split('\n')[0].replace(/0x[0-9a-fA-F]{66,}/g, '[serialized data omitted]');
 
@@ -47,32 +50,106 @@ export async function run({load, snippets}) {
     assert.ok(fixture.methods.includes('eth_estimateGas')); assert.equal(fixture.sends.length, 0);
     assert.ok(!fixture.methods.some(method => method.startsWith('eth_send')));
   });
-  const writesId = id('arkiv-write-safety'); const writes = await load(writesId);
-  const importRows = (fixture, count, save = async () => {}) => writes.importRows(writes.createSerialWriter(), fixture.reader, fixture.wallet, 'job', rows(count), 2, save);
-  await test('bounded-import-records-every-complete-and-final-batch', [writesId], async () => {
-    const fixture = makeFixture(); const journal = []; const progress = await importRows(fixture, 5, async step => journal.push(step));
-    assert.deepEqual(progress.map(step => step.rowIds.length), [2, 2, 1]); assert.equal(fixture.sends.length, 3);
-    assert.ok(progress.every(step => step.state === 'confirmed' && step.txHash));
-    assert.deepEqual(journal.map(step => step.state), Array(3).fill(['prepared', 'submitting', 'confirmed']).flat());
-  });
-  for (const [mode, hashExpected] of [['omitCreateLogs', true], ['broadcastResponseLost', false], ['denyMutation', false]]) {
-    await test(`write-failure-${mode}-halts-with-reconciliation`, [writesId], async () => {
-      const fixture = makeFixture(); fixture[mode] = true; const [step] = await importRows(fixture, 5);
-      assert.equal(step.state, 'needs_reconciliation'); assert.equal(Boolean(step.txHash), hashExpected);
-      assert.equal(fixture.sends.length, mode === 'denyMutation' ? 0 : 1);
-    });
+  const writesId = id('arkiv-write-safety', 'references/resumable-import.md'); const writes = await load(writesId);
+  async function importFixture(count, action, fees = {gasPrice: 1n}) {
+    const directory = await mkdtemp(path.join(tmpdir(), 'arkiv-import-fixture-'));
+    const signer = privateKeyToAccount(generatePrivateKey()); // Synthetic signing only; never persist the private key.
+    let signatures = 0;
+    const account = {...signer, signTransaction: async request => {signatures++; return signer.signTransaction(request);}};
+    const fixture = makeFixture(account.address);
+    const options = {account, chain: fixture.reader.chain, request: fixture.request,
+      jobId: 'synthetic-import', batchSize: 2, gasCeiling: 200000n, maxTotalCost: 10000000n, fees,
+      planPath: path.join(directory, 'plan.json'), journalPath: path.join(directory, 'journal.jsonl'),
+      rows: Array.from({length: count}, (_, index) => ({id: `row-${index}`, salt: BigInt(index), expiresAt: fixture.head + 3600n,
+        payload: new TextEncoder().encode(JSON.stringify({body: `Synthetic ${index}`})), contentType: 'application/json',
+        attributes: {project: 'synthetic-import', row_number: u64(BigInt(index))}, flags: {readonly: true}}))};
+    const journal = async () => (await readFile(options.journalPath, 'utf8')).trimEnd().split('\n').map(JSON.parse);
+    try {
+      const prepared = await writes.prepareImport(options); options.planSha256 = prepared.planSha256;
+      assert.equal(signatures, 0); assert.equal(fixture.sends.length, 0);
+      fixture.beforeSend = async ({method, params}) => {
+        assert.equal(method, 'eth_sendRawTransaction');
+        const saved = (await journal()).at(-1);
+        assert.equal(saved.state, 'submitting'); assert.equal(saved.raw, params[0]);
+        assert.equal(saved.txHash, keccak256(params[0])); assert.equal(saved.planSha256, prepared.planSha256);
+      };
+      await action({fixture, options, prepared, journal, signatures: () => signatures});
+    } finally {
+      // Both files are private synthetic job state under this test's own mkdtemp directory.
+      assert.equal(path.dirname(path.resolve(directory)), path.resolve(tmpdir()));
+      assert.ok(path.basename(directory).startsWith('arkiv-import-fixture-'));
+      await rm(directory, {recursive: true, force: true});
+    }
   }
-  await test('confirmed-checkpoint-failure-keeps-keys-and-halts', [writesId], async () => {
-    const fixture = makeFixture(); const [step] = await importRows(fixture, 5, async step => {if (step.state === 'confirmed') throw new Error('Checkpoint failed');});
-    assert.equal(step.state, 'confirmed'); assert.equal(step.createdEntities.length, 2); assert.ok(step.checkpointError); assert.equal(fixture.sends.length, 1);
-    const receipt = await writes.inspectCreateReceipt(fixture.reader, step.txHash, 2);
-    assert.equal(receipt.state, 'receipt_success'); assert.equal('rowIds' in receipt, false); assert.equal('createdEntities' in receipt, false);
-  });
-  await test('writer-FIFO-failure-does-not-poison-next-task', [writesId], async () => {
-    const run = writes.createSerialWriter(), observed = [];
-    const failed = run(async () => { observed.push(1); throw new Error('Expected'); });
-    const next = run(async () => observed.push(2)); await assert.rejects(failed); await next; assert.deepEqual(observed, [1, 2]);
-  });
+  await test('importer-freezes-plan-and-confirms-every-bounded-batch-without-replay', [writesId], () => importFixture(5, async ({fixture, options, prepared, journal, signatures}) => {
+    const plan = JSON.parse(await readFile(options.planPath, 'utf8'));
+    assert.deepEqual(plan.batches.map(batch => [batch.index, batch.nonce, batch.rows.length]), [[0, 0, 2], [1, 1, 2], [2, 2, 1]]);
+    assert.equal(prepared.batches, 3); assert.equal((await writes.runImport(options)).state, 'complete');
+    assert.equal(fixture.entities.size, 5); assert.equal(signatures(), 3);
+    assert.deepEqual((await journal()).map(record => record.state), ['initialized', ...Array(3).fill(['prepared', 'submitting', 'confirmed']).flat()]);
+    assert.equal((await writes.runImport(options)).confirmedBatches, 3); assert.equal(fixture.sends.length, 3); assert.equal(signatures(), 3);
+  }));
+  await test('importer-authenticates-EIP1559-fees-and-readback', [writesId], () => importFixture(1, async ({fixture, options}) => {
+    assert.equal((await writes.runImport(options)).state, 'complete');
+    assert.equal(fixture.transactions.values().next().value.type, '0x2'); assert.equal(fixture.sends.length, 1);
+  }, {maxFeePerGas: 2n, maxPriorityFeePerGas: 1n}));
+  await test('importer-lost-ACK-retains-durable-hash-and-resumes-only-remaining-batch', [writesId], () => importFixture(3, async ({fixture, options, journal, signatures}) => {
+    fixture.broadcastResponseLost = true;
+    const uncertain = await writes.runImport(options); assert.equal(uncertain.state, 'needs_reconciliation'); assert.equal(uncertain.index, 0);
+    assert.equal(uncertain.txHash, (await journal()).find(record => record.state === 'submitting').txHash);
+    assert.equal(fixture.sends.length, 1); fixture.broadcastResponseLost = false;
+    assert.equal((await writes.runImport(options)).state, 'complete'); assert.equal(fixture.sends.length, 2); assert.equal(signatures(), 2);
+    assert.equal(new Set(fixture.sends.map(send => send.txHash)).size, 2);
+  }));
+  await test('importer-capture-sync-failure-stops-before-provider-admission', [writesId], () => importFixture(3, async ({fixture, options, signatures}) => {
+    const handle = await open(options.journalPath, 'a'), prototype = Object.getPrototypeOf(handle), originalSync = prototype.sync;
+    await handle.close(); let syncs = 0;
+    prototype.sync = async function () {if (++syncs === 2) throw new Error('Synthetic capture sync failure'); return originalSync.call(this);};
+    try {await assert.rejects(writes.runImport(options), /Stopped before durable send admission/);}
+    finally {prototype.sync = originalSync;}
+    assert.equal(syncs, 2); assert.equal(signatures(), 1); assert.equal(fixture.sends.length, 0);
+    assert.ok(!fixture.methods.some(method => method.startsWith('eth_send')));
+  }));
+  await test('importer-confirmation-sync-failure-retains-known-hash-and-never-recreates-prefix', [writesId], () => importFixture(3, async ({fixture, options, journal, signatures}) => {
+    const handle = await open(options.journalPath, 'a'), prototype = Object.getPrototypeOf(handle), originalSync = prototype.sync;
+    await handle.close(); let syncs = 0;
+    prototype.sync = async function () {if (++syncs === 3) throw new Error('Synthetic confirmation sync failure'); return originalSync.call(this);};
+    try {await assert.rejects(writes.runImport(options), /Synthetic confirmation sync failure/);}
+    finally {prototype.sync = originalSync;}
+    assert.equal(syncs, 3); assert.equal(fixture.sends.length, 1);
+    const durablePrefix = (await journal()).filter(record => record.state !== 'confirmed');
+    assert.equal(durablePrefix.at(-1).state, 'submitting'); assert.equal(durablePrefix.at(-1).txHash, fixture.sends[0].txHash);
+    // Controlled storage-loss model: discard only the failed, unsynced final append.
+    await writeFile(options.journalPath, durablePrefix.map(record => JSON.stringify(record)).join('\n') + '\n');
+    assert.equal((await writes.runImport(options)).state, 'complete'); assert.equal(fixture.sends.length, 2); assert.equal(signatures(), 2);
+  }));
+  await test('importer-plan-tamper-and-torn-journal-fail-before-RPC', [writesId], () => importFixture(3, async ({fixture, options}) => {
+    const plan = await readFile(options.planPath, 'utf8'), calls = fixture.methods.length;
+    await writeFile(options.planPath, plan.replace('synthetic-import', 'altered-job'));
+    await assert.rejects(writes.runImport(options), /Plan tampered/); assert.equal(fixture.methods.length, calls);
+    await writeFile(options.planPath, plan);
+    await writeFile(options.journalPath, (await readFile(options.journalPath, 'utf8')).trimEnd());
+    await assert.rejects(writes.runImport(options), /Torn journal/); assert.equal(fixture.methods.length, calls); assert.equal(fixture.sends.length, 0);
+  }));
+  await test('importer-changed-pending-nonce-stops-before-signing', [writesId], () => importFixture(3, async ({fixture, options, signatures}) => {
+    fixture.pendingNonce = 1; await assert.rejects(writes.runImport(options), /Account nonce changed/);
+    assert.equal(signatures(), 0); assert.equal(fixture.sends.length, 0);
+  }));
+  for (const [fault, pattern] of [['missing-receipt', /could not be found/], ['wrong-input', /Provider transaction differs/], ['wrong-readback', /Entity readback mismatch/], ['reverted-receipt', /successful inclusion/], ['reorg', /no longer canonical/]]) {
+    await test(`importer-reconciliation-${fault}-halts-without-resend`, [writesId], () => importFixture(3, async ({fixture, options, signatures}) => {
+      fixture.broadcastResponseLost = true; const uncertain = await writes.runImport(options);
+      assert.equal(uncertain.state, 'needs_reconciliation'); fixture.broadcastResponseLost = false;
+      if (fault === 'missing-receipt') fixture.hideReceipts = true;
+      if (fault === 'wrong-input') fixture.transactions.get(uncertain.txHash).input = '0x';
+      if (fault === 'wrong-readback') fixture.entities.values().next().value.contentType = 'text/plain';
+      if (fault === 'reverted-receipt') fixture.receipts.get(uncertain.txHash).status = '0x0';
+      const request = fault === 'reorg' ? async input => {
+        const result = await fixture.request(input);
+        return input.method === 'eth_getBlockByNumber' && input.params[0] !== '0x0' ? {...result, hash: publicKey(0)} : result;
+      } : fixture.request;
+      await assert.rejects(writes.runImport({...options, request}), pattern); assert.equal(fixture.sends.length, 1); assert.equal(signatures(), 1);
+    }));
+  }
   const expiryId = id('arkiv-entity-expiration'); const expiry = await load(expiryId);
   await test('expiration-extends-returned-absolute-deadline-and-skips-sufficient-life', [expiryId], async () => {
     const fixture = makeFixture(); const created = await seed(fixture); fixture.head += 20n;
@@ -104,9 +181,9 @@ export async function run({load, snippets}) {
   });
   const modelId = id('arkiv-data-modeling');
   await test('model-typed-parent-and-key-related-tags-use-returned-identity', [modelId], async () => {
-    const model = await load(modelId); const fixture = makeFixture(); const result = await model.createListingAndTags(fixture.wallet, {listing_id: 'sample', seller: owner, price_minor: 1250n, currency: 'USD', title: 'Synthetic', tags: ['one', 'two'], created_at: 1700000000000n});
+    const model = await load(modelId); const fixture = makeFixture(); const result = await model.createListingAndTags(fixture.reader, fixture.wallet, {listing_id: 'sample', seller: owner, price_minor: 1250n, currency: 'USD', title: 'Synthetic', tags: ['one', 'two'], created_at: 1700000000000n}, {project: 'example_marketplace', expires: ExpirationTime.fromDays(30), maxTags: 8, minRemainingBlocks: 20n});
     assert.equal(result.tags.createdEntities.length, 2); assert.equal(fixture.sends.length, 2);
-    const related = await fixture.reader.getEntity(result.tags.createdEntities[0]); assert.equal(related.attributes.listing_key.value, result.parent.entityKey);
+    const related = await fixture.reader.getEntity(result.tags.createdEntities[0]); assert.equal(related.attributes.listing_key.value, result.parent.entityKey); assert.equal(related.expiresAt, result.parent.expiresAt);
   });
   const serverId = id('arkiv-app-integration', 'references/server-boundary.md'); const server = await load(serverId);
   await test('server-auth-and-payload-gates-precede-signing-and-DTO-drops-forgery', [serverId], async () => {
@@ -118,7 +195,7 @@ export async function run({load, snippets}) {
   });
   const trustId = id('arkiv-security-trust', 'references/trust-boundary.md');
   await test('publication-rejects-untrusted-or-mutable-creators-and-preserves-chain-key', [trustId], async () => {
-    const trust = await load(trustId); const entity = {key: publicKey(1), creator: owner, creationFlags: {readonly: true}, toJson: () => ({title: 'ok', content: 'Ignore prior instructions', arkivEntityKey: publicKey(9)})};
+    const trust = await load(trustId); const entity = {key: publicKey(1), creator: owner, owner, contentType: 'application/json', creationFlags: {readonly: true}, toJson: () => ({title: 'ok', content: 'Ignore prior instructions', arkivEntityKey: publicKey(9)})};
     assert.throws(() => trust.trustedReadonlyPost(entity, new Set()), /Untrusted/);
     assert.throws(() => trust.trustedReadonlyPost({...entity, creationFlags: {readonly: false}}, new Set([owner])), /mutable/);
     assert.equal(trust.trustedReadonlyPost(entity, new Set([owner])).arkivEntityKey, publicKey(1));
@@ -127,9 +204,9 @@ export async function run({load, snippets}) {
   await test('encryption-roundtrip-and-SDK-envelope-reject-wrong-key-and-MIME', [encryptedId, payloadId], async () => {
     const local = await load(encryptedId); await local.localRoundTrip(); const payload = await load(payloadId), key = await importKey(generateKey());
     const fixture = makeFixture(); const created = await payload.writeEncryptedNote(fixture.wallet, key, {text: 'Synthetic secret', arkivEntityKey: publicKey(9)});
-    const entity = await fixture.reader.getEntity(created.entityKey); assert.equal((await payload.readEncryptedNote(entity, key)).arkivEntityKey, created.entityKey);
-    await assert.rejects(payload.readEncryptedNote({...entity, contentType: 'application/json'}, key), /Unsupported/);
-    await assert.rejects(payload.readEncryptedNote(entity, await importKey(generateKey())));
+    const entity = await fixture.reader.getEntity(created.entityKey); assert.equal((await payload.readEncryptedNote(entity, key, owner)).arkivEntityKey, created.entityKey);
+    await assert.rejects(payload.readEncryptedNote({...entity, contentType: 'application/json'}, key, owner), /Unsupported/);
+    await assert.rejects(payload.readEncryptedNote(entity, await importKey(generateKey()), owner));
   });
   const largeId = id('arkiv-large-files');
   await test('external-pointer-byte-hash-and-origin-token-guards', [largeId], async () => {
@@ -149,7 +226,7 @@ export async function run({load, snippets}) {
     const cursor = Object.create(QueryError.prototype); cursor.kind = 'cursor'; assert.equal(recovery.recoveryFor(cursor).action, 'restart_walk');
     const mutation = Object.create(EntityMutationError.prototype); mutation.txHash = publicKey(1); assert.equal(recovery.recoveryFor(mutation).action, 'reconcile_write');
   });
-  const browserIds = [id('arkiv-app-integration', 'references/browser-wallet.md'), id('arkiv-best-practices', 'references/integration-patterns.md', 2)];
+  const browserIds = [id('arkiv-app-integration', 'references/browser-wallet.md')];
   for (const browserId of browserIds) await test(`wallet-explicit-account-and-connection-race:${browserId}`, [browserId], async () => {
     const browser = await load(browserId); let changed = false, connected = true;
     const provider = {request: async ({method}) => {
@@ -166,32 +243,16 @@ export async function run({load, snippets}) {
   const realtimeId = id('arkiv-app-integration', 'references/realtime.md');
   await test('watcher-serializes-handlers-reports-failure-and-unwatches', [realtimeId], async () => {
     const realtime = await load(realtimeId); let callbacks, stopped = false; const seen = [], errors = [];
-    const stop = realtime.watchSerially({watchEntityEvents: input => {callbacks = input; return () => {stopped = true;};}}, 3n,
+    const stop = realtime.watchSerially({watchEntityEvents: input => {callbacks = input; return () => {stopped = true;};}},
       async event => {seen.push(event.index); if (event.index === 1) throw new Error('Synthetic event failure');}, error => errors.push(error));
     callbacks.onEvent({index: 1}); callbacks.onEvent({index: 2}); await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(seen, [1, 2]); assert.equal(errors.length, 1); stop(); callbacks.onEvent({index: 3});
-    await new Promise(resolve => setImmediate(resolve)); assert.equal(stopped, true); assert.deepEqual(seen, [1, 2]);
+    assert.deepEqual(seen, [1]); assert.equal(errors.length, 1); stop(); callbacks.onEvent({index: 3});
+    await new Promise(resolve => setImmediate(resolve)); assert.equal(stopped, true); assert.deepEqual(seen, [1]);
   });
   const readerId = id('arkiv-app-integration', 'references/server-boundary.md', 2);
   await test('server-reader-requires-header-key-without-broadcast-on-construction', [readerId], async () => {
     const reader = await load(readerId); assert.throws(() => reader.createServerReader(''), /Missing/);
     assert.equal(reader.createServerReader('synthetic-access-key').chain.id, 7738577);
-  });
-  const legacyDtoId = id('arkiv-best-practices', 'references/integration-patterns.md');
-  await test('retained-DTO-parser-drops-forged-key-and-rejects-invalid-payload', [legacyDtoId], async () => {
-    const dto = await load(legacyDtoId); assert.equal(dto.postDto({key: publicKey(1), toJson: () => ({title: 't', content: 'c', arkivEntityKey: publicKey(9)})}).arkivEntityKey, publicKey(1));
-    assert.throws(() => dto.parsePost({title: false, content: 'c'}), /Invalid/);
-  });
-  const legacyAdvancedId = id('arkiv-best-practices', 'references/advanced-patterns.md');
-  await test('retained-relationship-creates-separate-memberships-and-filtered-read', [legacyAdvancedId], async () => {
-    const advanced = await load(legacyAdvancedId); const fixture = makeFixture(); await advanced.createProfileWithSkills(fixture.wallet, 'alice');
-    const page = await advanced.findFrontendMemberships(fixture.reader); assert.equal(page.entities.length, 1); assert.equal(page.entities[0].attributes.skill.value, 'frontend'); assert.equal(fixture.sends.length, 2);
-  });
-  const legacySdkId = id('arkiv-best-practices', 'references/sdk-reference.md');
-  await test('retained-SDK-create-and-bounded-batch-use-real-receipts', [legacySdkId], async () => {
-    const sdk = await load(legacySdkId); const fixture = makeFixture(); const created = await sdk.createReadonly(fixture.wallet); assert.ok(created.entityKey);
-    const result = await sdk.createNotes(fixture.wallet, ['one', 'two']); assert.equal(result.createdEntities.length, 2);
-    const sends = fixture.sends.length; await sdk.createNotes(fixture.wallet, []); assert.equal(fixture.sends.length, sends);
   });
   const relationshipId = id('arkiv-data-modeling', 'references/relationships.md');
   await test('atomic-reference-check-detects-stale-creator-nonce-without-resend', [relationshipId], async () => {

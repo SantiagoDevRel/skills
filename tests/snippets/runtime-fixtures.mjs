@@ -505,11 +505,16 @@ export async function run({load, snippets}) {
   });
   await test('replay-quota-and-single-block-capacity-preserve-durable-progress', [replayId], async () => {
     const replay = await load(replayId);
-    for (const error of [{status: 429, message: 'Quota exhausted'}, {code: -32602, message: 'query exceeds max results 20000'}]) {
+    for (const [target, error] of [[8n, {status: 429, message: 'Quota exhausted'}], [1n, {code: -32602, message: 'query exceeds max results 20000'}]]) {
       let reads = 0, commits = 0;
-      const reader = {getBlockNumber: async () => 1n, getBlock: async ({blockNumber}) => ({hash: publicKey(blockNumber)}),
-        getLogs: async () => {reads++; throw error;}};
-      await assert.rejects(replay.replayEntityRanges(reader, {blockNumber: 0n, blockHash: publicKey(0)}, async () => {commits++;}), received => received === error);
+      const unexpectedRetry = new Error('Replay exceeded the fixture read bound');
+      const reader = {getBlockNumber: async () => target, getBlock: async ({blockNumber}) => ({hash: publicKey(blockNumber)}),
+        getLogs: async () => {
+          // A second read fails with a distinct non-capacity error, bounding a broken single-block retry.
+          if (++reads > 1) throw unexpectedRetry;
+          throw error;
+        }};
+      await assert.rejects(replay.replayEntityRanges(reader, {blockNumber: 0n, blockHash: publicKey(0)}, async () => {commits++;}, {chunkBlocks: 8n}), received => received === error);
       assert.equal(reads, 1); assert.equal(commits, 0);
     }
   });

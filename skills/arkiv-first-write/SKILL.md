@@ -5,7 +5,7 @@ license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
   network: "tiramisu"
-  verified: "2026-10-05"
+  verified: "2026-10-08"
 ---
 
 # First Arkiv write
@@ -20,7 +20,7 @@ Inspect the existing package manager and installed SDK declarations. Explain a d
 npm install @arkiv-network/sdk@^0.8.1 viem
 ```
 
-Configure `ARKIV_PRIVATE_KEY` locally in a server-only environment. Never request its value in chat. Use a dedicated development EOA, not a production account. An access key, if needed, goes in a server-side `X-API-KEY` header; it does not fund transactions.
+Configure `ARKIV_PRIVATE_KEY` locally in a server-only environment. Never request its value in chat. Use a dedicated development EOA, not a production account. An access key, if needed, goes in a server-side `X-API-KEY` header bound to the official RPC origin; it does not fund transactions. The helpers below reject access keys for other origins and refuse redirects.
 
 Announce **Tiramisu, chain 7738577**, and the proposed entity before sending. A live write spends test GLM: get authorization for that write or a bounded smoke-test budget. Check the balance and estimate the actual transaction; a positive balance alone does not establish enough gas. Use the [Hub faucet](https://hub.arkiv.network/faucet) without promising an amount or cooldown. If spending is not authorized, stop at preparation and estimation.
 
@@ -34,6 +34,8 @@ The following server-only helper assumes the write has been authorized. Pass a l
 
 Use an exclusive writer for this creator while running the seed. Query-before-create prevents routine repeated runs; it is **not atomic uniqueness** across processes. A reset chain or expired seed means a new key, so rebuild references. This example makes its note readonly; its owner can still delete, transfer or extend it.
 
+Save the helper as `first-note.ts` and the [guarded estimator](references/estimate.md) as `estimate-create.ts`. Import their exports in your server entrypoint and call `ensureFirstNote(account, rpcUrl, chain, { accessKey, estimateGas: data => estimateCreate(account, data, rpcUrl, chain, accessKey) })`. The callback estimates the same frozen parameters without broadcasting. A fresh seed fails closed if it is missing; seed reuse needs no estimator.
+
 ```typescript
 import {
   createPublicClient, createWalletClient, EntityMutationError,
@@ -42,7 +44,13 @@ import {
 import { key, u64 } from "@arkiv-network/sdk/attr";
 import { tiramisu } from "@arkiv-network/sdk/chains";
 import { eq } from "@arkiv-network/sdk/query";
-import { http, type Chain, type LocalAccount } from "viem";
+import { http, type Chain, type LocalAccount, type TransactionReceipt } from "viem";
+import { estimateFeesPerGas } from "viem/actions";
+
+type FirstWriteOptions = {
+  accessKey?: string;
+  estimateGas?: (data: CreateEntityParameters) => Promise<bigint>;
+};
 
 export function firstNoteParameters(): CreateEntityParameters {
   return {
@@ -60,20 +68,24 @@ export async function ensureFirstNote(
   account: LocalAccount,
   rpcUrl: string = tiramisu.rpcUrls.default.http[0],
   chain: Chain = tiramisu,
+  options: FirstWriteOptions = {},
 ) {
+  if (options.accessKey && new URL(rpcUrl).origin !== new URL(tiramisu.rpcUrls.default.http[0]).origin) {
+    throw new Error("Access key origin mismatch");
+  }
+  const fetchOptions = { cache: "no-store" as const, redirect: "error" as const,
+    ...(options.accessKey ? { headers: { "X-API-KEY": options.accessKey } } : {}) };
   const publicClient = createPublicClient({
-    chain,
-    transport: http(rpcUrl, { fetchOptions: { cache: "no-store" }, retryCount: 0 }),
-  });
-  const walletClient = createWalletClient({
-    account, chain, transport: http(rpcUrl, { retryCount: 0 }),
+    chain, cacheTime: 0,
+    transport: http(rpcUrl, { fetchOptions, retryCount: 0, timeout: 10_000 }),
   });
   if (await publicClient.getChainId() !== chain.id) throw new Error("Wrong chain");
   const expected = jsonToPayload({ text: "Hello, Arkiv" });
   const matches = (payload: Uint8Array) =>
     payload.length === expected.length && payload.every((value, i) => value === expected[i]);
   const prior = await publicClient
-    .select({ key: true, payload: true, expiresAt: true, creationFlags: true })
+    .select({ key: true, payload: true, expiresAt: true, creationFlags: true,
+      contentType: true, attributes: true })
     .where(eq("project", "first_note"), eq("entity_type", "note"), eq("seed_id", "welcome_v1"))
     .createdBy(account.address)
     .atBlock(await publicClient.getBlockNumber({ cacheTime: 0 }))
@@ -82,49 +94,77 @@ export async function ensureFirstNote(
   if (prior.entities.length > 1 || prior.hasNextPage()) throw new Error("Duplicate seed: reconcile");
   const existing = prior.entities[0];
   if (existing) {
-    if (!existing.creationFlags.readonly || !matches(existing.payload)) {
+    if (!existing.creationFlags.readonly || existing.creationFlags.permissionlessExtension
+        || existing.contentType !== "application/json" || !matches(existing.payload)
+        || existing.attributes.created_at?.type !== "u64") {
       throw new Error("Seed differs: reconcile instead of overwriting");
     }
     return { entityKey: existing.key, expiresAt: existing.expiresAt.toString(), reused: true };
   }
-  if (await publicClient.getBalance({ address: account.address }) === 0n) {
+  const balance = await publicClient.getBalance({ address: account.address });
+  if (balance === 0n) {
     throw new Error("Fund the signer before writing");
   }
-  // The SDK estimates gas during submission. Handle insufficient funds without retry loops.
+  if (typeof options.estimateGas !== "function") throw new Error("Configure guarded estimateCreate before writing");
+  const parameters = firstNoteParameters();
+  const estimated = await options.estimateGas(parameters);
+  if (typeof estimated !== "bigint" || estimated <= 0n) throw new Error("Invalid gas estimate");
+  const gas = (estimated * 12n + 9n) / 10n; // Round up this helper's 20% gas margin.
+  const fees = await estimateFeesPerGas(publicClient);
+  if (balance < gas * fees.maxFeePerGas) throw new Error("Insufficient funds for estimated gas and fee cap");
+  const walletClient = createWalletClient({
+    account, chain, cacheTime: 0,
+    transport: http(rpcUrl, { fetchOptions, retryCount: 0, timeout: 10_000 }),
+  });
   let created;
   try {
-    created = await walletClient.createEntity(firstNoteParameters());
+    // createEntity returns { entityKey, txHash, expiresAt }, without a receipt.
+    created = await walletClient.createEntity(parameters, { gas, ...fees });
   } catch (error) {
     if (error instanceof EntityMutationError && error.txHash) {
-      // This may be a revert OR a confirmed write whose receipt could not be decoded.
+      // This may be a revert, a receipt-decode failure, or a timeout with the tx still pending.
       // Inspect receipt status/logs and the scoped seed before deciding to send again.
-      throw new Error(`Reconcile transaction ${error.txHash}; do not resend yet`, { cause: error });
+      throw Object.assign(new Error(`Reconcile transaction ${error.txHash}; do not resend yet`, { cause: error }),
+        { txHash: error.txHash });
     }
     throw error; // No hash also requires nonce/pending/seed inspection if broadcast was possible.
   }
-  const page = await publicClient
-    .select({ key: true, payload: true, expiresAt: true })
-    .where(eq("$key", key(created.entityKey)))
-    .atBlock(await publicClient.getBlockNumber({ cacheTime: 0 }))
-    .limit(1)
-    .fetch();
-  const entity = page.entities[0];
-  if (!entity || entity.key !== created.entityKey || !matches(entity.payload)) {
-    throw new Error(`Read-back failed for ${created.entityKey}; reconcile, do not resend`);
+  let receipt: TransactionReceipt | undefined;
+  try {
+    receipt = await publicClient.getTransactionReceipt({ hash: created.txHash });
+    if (receipt.status !== "success") throw new Error("Create receipt is not successful");
+    const page = await publicClient
+      .select({ key: true, payload: true, expiresAt: true, contentType: true,
+        creationFlags: true, attributes: true })
+      .where(eq("$key", key(created.entityKey)))
+      .atBlock(receipt.blockNumber).limit(1).fetch();
+    const entity = page.entities[0];
+    const timestamp = entity?.attributes.created_at;
+    const expectedTimestamp = parameters.attributes?.created_at;
+    if (!entity || entity.key !== created.entityKey || !matches(entity.payload)
+        || entity.contentType !== parameters.contentType || !entity.creationFlags.readonly
+        || entity.creationFlags.permissionlessExtension || timestamp?.type !== "u64"
+        || typeof expectedTimestamp !== "object" || expectedTimestamp?.type !== "u64"
+        || timestamp.value !== expectedTimestamp.value) throw new Error("Read-back mismatch");
+    if (entity.expiresAt !== created.expiresAt
+        || entity.expiresAt - receipt.blockNumber !== parameters.expires.minLifetime) {
+      throw new Error("Create expiration does not match its requested lifetime");
+    }
+    return { entityKey: entity.key, txHash: created.txHash,
+      receiptBlock: receipt.blockNumber.toString(), gasUsed: receipt.gasUsed.toString(),
+      expiresAt: entity.expiresAt.toString(), reused: false };
+  } catch (error) {
+    throw Object.assign(new Error("Confirmed write needs reconciliation; do not resend", { cause: error }), {
+      entityKey: created.entityKey, txHash: created.txHash, expiresAt: created.expiresAt.toString(),
+      receiptBlock: receipt?.blockNumber.toString(), gasUsed: receipt?.gasUsed.toString(),
+    });
   }
-  if (entity.expiresAt !== created.expiresAt) {
-    throw new Error(`Expiration changed for ${created.entityKey}; reconcile`);
-  }
-  return {
-    entityKey: entity.key, txHash: created.txHash,
-    expiresAt: entity.expiresAt.toString(), reused: false,
-  };
 }
 ```
 
 The returned `expiresAt` is decoded from the create receipt in SDK 0.8.1. It is a block number, while `created_at` above is an application timestamp in milliseconds. Payload and attributes are public. Readonly and Entity Expiration do not make them private.
 
-Inspect the confirmed transaction and entity in the [Tiramisu explorer](https://tiramisu.explorer.arkiv.network). If the host already has read-only verification tools, use their actual available schemas; the SDK and explorer suffice without an integration. Keep the returned key and hash as separate values.
+Inspect the confirmed transaction and entity in the [Tiramisu explorer](https://tiramisu.explorer.arkiv.network): entity route `/entity/<entityKey>` and transaction route `/tx/<txHash>`. If the host already has read-only verification tools, use their actual available schemas; the SDK and explorer suffice without an integration. Keep the returned key and hash as separate values, including structured error fields after a failed read-back.
 
 ## Add project rules with consent
 
@@ -142,10 +182,11 @@ Offer this candidate block for the consumer project's `AGENTS.md`. Ask before ed
 ## Failures and testing
 
 - `InvalidValueError` mentioning i32: use `u64` in both write and query.
-- `Ident32InvalidByte` / `0x276f7798`: remove uppercase attribute names.
+- `outside the name charset` / `Ident32InvalidByte` / `0x276f7798`: Tiramisu rejects uppercase attribute names even though the SDK's rendered charset message lists A–Z; rename them to lowercase.
+- `InvalidContentTypeError`: use a lowercase MIME type/subtype, such as `application/json`, without parameters or whitespace.
 - `EntityMutationError` or missing read-back: reconcile; never treat a second create as repair.
-- Seed collision, wrong chain or zero balance: stop before sending.
+- Seed collision, wrong chain, insufficient funding or missing estimator: stop before sending.
 
 Read [testing.md](references/testing.md) for realistic fixtures and a bounded live smoke. Read `arkiv-query` for multi-page seeds; `arkiv-app-integration` for browser wallets and authenticated routes.
 
-Sources: [SDK 0.8.1](https://www.npmjs.com/package/@arkiv-network/sdk/v/0.8.1), [create implementation](https://github.com/Arkiv-Network/arkiv-sdk-js/blob/main/src/actions/wallet/createEntity.ts), [query documentation](https://docs.arkiv.network/json-rpc/querying-data/), [faucet](https://hub.arkiv.network/faucet).
+Sources: [SDK 0.8.1](https://www.npmjs.com/package/@arkiv-network/sdk/v/0.8.1), [create implementation](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/actions/wallet/createEntity.ts), [query documentation](https://docs.arkiv.network/json-rpc/querying-data/), [faucet](https://hub.arkiv.network/faucet).

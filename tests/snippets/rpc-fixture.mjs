@@ -1,5 +1,6 @@
 import {createPublicClient,createWalletClient,predictEntityKey,ENTITY_EVENTS_ABI} from '@arkiv-network/sdk';
 import {tiramisu} from '@arkiv-network/sdk/chains';
+import {decFromUnits} from '@arkiv-network/sdk/attr';
 import {custom,decodeFunctionData,decodeAbiParameters,encodeAbiParameters,encodeEventTopics,parseAbi,parseAbiParameters,hexToBytes,parseTransaction,keccak256,recoverTransactionAddress} from 'viem';
 const execute=parseAbi(['function execute((uint8 operation, bytes operationData)[] ops) external returns (bytes32[] keys)']);
 const nonceAbi=parseAbi(['function entityNonce(address owner) external view returns(uint64)']);
@@ -11,7 +12,7 @@ const hex=value=>'0x'+BigInt(value).toString(16);
 let globalTx=0;
 export function makeFixture(owner='0x1111111111111111111111111111111111111111'){
  const fixture={head:4096n,owner,balance:10n**18n,entities:new Map(),nonces:new Map(),sends:[],methods:[],queries:[],receipts:new Map(),transactions:new Map(),staleNonce:false,missingAfterTransfer:false};
- function decodeAttribute(cell){return{name:text(cell.name),type:names[cell.typeId],value:[7,8].includes(cell.typeId)?(cell.typeId===7?cell.value:text(cell.value)):cell.typeId===1?BigInt(cell.value)!==0n:cell.typeId===2?Number(BigInt.asIntN(32,BigInt(cell.value))):cell.value};}
+ function decodeAttribute(cell){return{name:text(cell.name),type:names[cell.typeId],value:[7,8].includes(cell.typeId)?(cell.typeId===7?cell.value:text(cell.value)):cell.typeId===1?BigInt(cell.value)!==0n:cell.typeId===2?Number(BigInt.asIntN(32,BigInt(cell.value))):cell.typeId===5?decFromUnits(BigInt.asIntN(256,BigInt(cell.value))).value:cell.typeId===9?'0x'+cell.value.slice(-40):cell.value};}
  async function request({method,params:arguments_=[]}){
   fixture.methods.push(method);
   if(method==='eth_chainId')return'0x7614d1';

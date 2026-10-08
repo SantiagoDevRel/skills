@@ -1,6 +1,6 @@
-# Feature-request form — checked 2026-10-05
+# Feature-request form — checked 2026-10-08
 
-Source: [upstream feature form](https://github.com/Arkiv-Network/reported-issues/blob/main/.github/ISSUE_TEMPLATE/2-feature-request.yml). Title prefix: `[Idea]: `. Upstream labels: `feature-request`, `triage`, `reported-issue`; CLI submission does not apply them automatically.
+Source: [upstream feature form](https://github.com/Arkiv-Network/reported-issues/blob/main/.github/ISSUE_TEMPLATE/2-feature-request.yml), [raw YAML](https://raw.githubusercontent.com/Arkiv-Network/reported-issues/main/.github/ISSUE_TEMPLATE/2-feature-request.yml). Title prefix: `[Idea]: `. The web form prefills it; paste only the summary. Upstream labels: `feature-request`, `triage`, `reported-issue`; project: `Arkiv-Network/4`. CLI submission does not apply this metadata automatically.
 
 | Heading | Required? |
 | --- | --- |

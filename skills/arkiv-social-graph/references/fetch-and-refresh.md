@@ -4,6 +4,8 @@ Use a configured public SDK client from `arkiv-first-write`/`arkiv-app-integrati
 
 The package accepts `limit` 1–5000 (default 500), requests pages of at most 200 and returns `truncated` when more entities exist. It selects payload, attributes and metadata. Use a tighter SDK projection plus `buildGraph` if a caller cannot accept those fields or payload costs. Graph nodes, junction rows and returned entity counts differ because a resolved join entity becomes an edge.
 
+The `project` option specifically filters the `project` attribute. For another namespace name, omit that option and use typed `attributes`, such as `{ app_namespace: str("example_social") }`. Supplying both intentionally intersects both filters.
+
 ```typescript
 import type { PublicArkivClient } from "@arkiv-network/sdk"
 import { tiramisu } from "@arkiv-network/sdk/chains"
@@ -30,6 +32,8 @@ export async function readSocialGraph(client: Pick<PublicArkivClient, "select" |
 ```
 
 Show `truncated` as a partial result; do not report a complete follow count from it. A result without truncation covers only the selected scope and snapshot. The package uses SDK cursor pagination; restart after an expired cursor. A missing `blockTiming` leaves expiration estimates unavailable. Display an unknown estimate and keep the original `bigint` `expiresAt` for exact decisions.
+
+`fetchArkivGraph` does not expose the query's snapshot block. Its later `blockTiming.currentBlock` is not that snapshot. For block-exact completeness/liveness, use a pinned SDK query and retain `QueryResult.blockNumber`; check an endpoint with `.where(eq("$key", key(k))).atBlock(B)` at the same block. A current `getEntity(k)` answers a different, head-state question and may throw `NoEntityFoundError`. At a verified block `B`, an entity is live only while `B < expiresAt`; absence alone does not establish expiration. Follow [query](../../arkiv-query/SKILL.md) and [Entity Expiration](../../arkiv-entity-expiration/SKILL.md) for historical-read and absence handling.
 
 ## Resolve missing endpoints
 

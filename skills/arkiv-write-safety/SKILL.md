@@ -5,7 +5,7 @@ license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
   network: tiramisu
-  verified: "2026-10-07"
+  verified: "2026-10-08"
 ---
 
 # Arkiv write safety
@@ -29,6 +29,10 @@ Serialize all writes for an account. `Promise.all` over wallet writes can collid
 The transaction nonce orders Ethereum-compatible transactions. The **entity-minting nonce** is a separate counter per creator and advances for each create. Pass the creating signer's address as `owner` in `reader.predictEntityKeys({ owner, count })` or `reader.predictEntityKeys({ owner, salts })`; with `salts`, their length determines the count. This counter is not `getTransactionCount()` and does not follow later ownership transfers. Hold exclusive access to every create between prediction and submission, use exactly the predicted salts, and verify receipt keys. An intervening create can invalidate relationships even if transaction nonce allocation was correct.
 
 Pass `TxParams` as the write method's second argument: `{ gas, nonce, gasPrice }` for legacy fees, or `{ gas, nonce, maxFeePerGas, maxPriorityFeePerGas }` for EIP-1559. Fee styles are mutually exclusive. Omitted fields use wallet estimation; explicit values are the caller's responsibility. Never reuse one fixed transaction nonce across a multi-batch import.
+
+An explicit `gas` skips automatic gas estimation and can turn a permission/expiry error into a paid revert. Leave it unset for ordinary writes, or run an exact unsigned estimate immediately before using the frozen gas cap. See [rendered funding/permission errors](../arkiv-troubleshooting/references/error-catalog.md); neither their message nor a missing hash proves the send phase.
+
+SDK 0.8.1 `executeBatch` returns created keys but no expiration deadlines. Decode each canonical `EntityCreated` log's `entityKey`/`expiresAt`, or read the entity at the chosen snapshot. The durable importer below validates those event fields against its frozen plan; do not infer expiries from the batch result.
 
 ## Reconcile before another submission
 

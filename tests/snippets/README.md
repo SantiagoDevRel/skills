@@ -7,6 +7,8 @@ From the repository root:
 ```bash
 npm ci --prefix tests/snippets --ignore-scripts --no-audit --no-fund
 node --test tests/snippets/infrastructure.test.mjs
+node --test tests/snippets/skill-references.test.mjs
+node scripts/check-skill-references.mjs
 node scripts/run-local-checks.mjs
 ```
 
@@ -17,6 +19,10 @@ Every TypeScript fence is extracted with its source path, line and hash. The cur
 Skills without TypeScript receive a `no-typescript-fences` coverage case only after every Markdown reference has been scanned. This records that types and code execution do not apply; it does not certify their prose or a chain operation.
 
 Runtime fixtures import the current extracted code. They exercise SDK serialization/receipt decoding and application success/failure handling over deterministic local RPC, with network access blocked. Signing keys exist only in memory. The reports distinguish module loading from outcome assertions and list any uncovered modules. Native chain authorization, real expiration, live event transport and browser wallet behavior need separate tests.
+
+Readonly-note replacement fixtures reject attacker transfers, mutable-content laundering, unauthorized owners and MIME mismatches before parsing or creating a replacement. Invalid JSON/body checks assert zero writes; valid replacements preserve all nine user attribute types, flags and original body. These are controlled SDK regressions, not new funded evidence.
+
+The standalone skill-reference check walks relative Markdown links from every `SKILL.md`, including links through other references and skills. Every Markdown file under a skill's `references/` must be reachable. Disconnected cycles and links shown only inside code examples do not satisfy reachability. This local check requires no plugin generator or external service.
 
 The nightly checks npm release metadata and the semantic content of cited official docs against `source-baseline.json`. Review and re-verify changed sources before updating that baseline. Repository commits are not a trigger; changed source content is yellow until checked. A removed API becomes red only after an actual current-source diagnostic, not a hash change alone.
 

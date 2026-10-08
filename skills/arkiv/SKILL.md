@@ -5,7 +5,7 @@ license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
   network: "tiramisu"
-  verified: "2026-10-07"
+  verified: "2026-10-08"
 ---
 
 # Arkiv
@@ -19,7 +19,7 @@ When starting an Arkiv project, inspect its package manifest, lockfile and insta
 
 If the installed version or declarations are unavailable, ask for that local evidence before producing executable SDK code. An "unverified" label does not make guessed exports or runnable client setup acceptable. For SDK 0.8.1, transport and account utilities come from `viem` and `viem/accounts`; use the source-checked first-write example after compatibility is established.
 
-Load only the task skill and references the request needs. For initial setup or a first entity, load `arkiv-first-write`, including when explaining the workflow without executing it. An exact error, failing operation or RPC configuration/URL validation goes to `arkiv-troubleshooting` first; a healthy query design goes to `arkiv-query`.
+Load only the task skill and references the request needs. For initial setup or a first entity, load `arkiv-first-write`, including when explaining the workflow without executing it. An exact error, failing operation or RPC configuration/URL validation goes to `arkiv-troubleshooting` first, except `EntityMutationError` or an unknown write outcome, which goes directly to `arkiv-write-safety`. A healthy query design goes to `arkiv-query`.
 
 | Task | Skill |
 | --- | --- |
@@ -34,17 +34,17 @@ Load only the task skill and references the request needs. For initial setup or 
 | Exact error, empty query or stale read | `arkiv-troubleshooting` |
 | Encrypting payloads with `arkiv-encryption` | `arkiv-encryption` |
 | Chunked files/images or hybrid blob storage | `arkiv-large-files` |
-| Relationships and `arkiv-graph` visualization | `arkiv-social-graph` |
+| Reading or visualizing existing relationships with `arkiv-graph` | `arkiv-social-graph` |
 | Durable Arkiv-to-application/PostgreSQL mirrors, checkpoint replay and ingestion compatibility | `arkiv-indexing` |
 | Sanitized bug/feature draft and approved submission | `arkiv-feedback` |
-| Read-only tools, available profiles and skills served by an MCP | `arkiv-mcp` |
+| MCP tools, profiles and served skills; read-only checks and consent-gated feedback | `arkiv-mcp` |
 
 If a listed skill is not installed, say which guidance is missing and use the official SDK/docs for that task. This index does not imply an installed integration.
 
 ## Rules that prevent real failures
 
-- **Use lowercase application attribute names.** Start with a letter, use `[a-z][a-z0-9_]*`, at most 32 bytes, and exclude reserved words. SDK 0.8.1 accepts uppercase but Tiramisu rejects it with `Ident32InvalidByte` (`0x276f7798`). Preserve an existing schema deliberately rather than silently renaming it.
-- **Type timestamps consistently.** `u64(Date.now())` holds millisecond timestamps; a bare number becomes i32 and overflows. The matching query must use the same constructor. On-chain `createdAt` and `expiresAt` are block numbers, not application milliseconds.
+- **Use lowercase application attribute names.** Start with a letter, use `[a-z][a-z0-9_]*`, at most 32 bytes, and exclude reserved words. Tiramisu rejects uppercase with `outside the name charset` (decoded `Ident32InvalidByte`, `0x276f7798`), despite SDK 0.8.1's broader alphabet and rendered A-Z allowance. Preserve an existing schema deliberately rather than silently renaming it.
+- **Type timestamps consistently.** `u64(Date.now())` holds millisecond timestamps; a bare number defaults to i32, so a millisecond timestamp is rejected as out of range. The matching query must use the same constructor. On-chain `createdAt` and `expiresAt` are block numbers, not application milliseconds.
 - **Keep credentials in the right place.** RPC access keys belong in server-side `X-API-KEY` headers; locally held signing keys never go in prompts, URLs or browser bundles. Browser wallet signatures use the connected wallet's EOA; an access key does not pay gas or authenticate app users.
 - **Pin paginated reads.** Read a block once, use `.atBlock(block)`, and assign `page = await page.next()`. A limit is a page size. Restart the whole walk on a cursor error instead of merging inconsistent partial results.
 - **Reconcile before another write.** A transaction can succeed while receipt decoding fails. Inspect the hash/receipt, nonce and application identity before resubmitting. Transport retry is not application idempotency.
@@ -67,6 +67,8 @@ Announce the network before writing. Confirm the entity/operation and GLM-spendi
 Payloads and attributes are public. Use `arkiv-security-trust` and, when appropriate, `arkiv-encryption` before storing sensitive data; encrypting a payload still leaves its attributes visible.
 
 Arkiv can hold ephemeral coordination state for agents. Entity Expiration is cleanup, not an enforceable mutex or access-control lease; an application must validate current ownership, deadlines and its own authorization. Durable agent state also requires a retention/recovery design outside a promise based on `ExpirationTime.permanent()`.
+
+Patches are unconditional, so a claim needs a single owner writer queue or separate claimant entities with creator scope and a deterministic canonical-block/tie-break policy, followed by readback. A read-then-patch does not reserve a job. Expiration also leaves creating/patching calldata readable while a provider retains it; encrypt data whose confidentiality must outlive its live-query deadline.
 
 ## References
 

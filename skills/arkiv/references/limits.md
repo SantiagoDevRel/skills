@@ -1,12 +1,12 @@
 # Limits and units
 
-Checked through 2026-10-07 against SDK 0.8.1 and bounded Tiramisu probes. SDK validation, an observed response and deployed consensus limits are different evidence.
+Source rechecked 2026-10-08 against SDK 0.8.1; retained Tiramisu probes are dated separately. SDK validation, an observed response and deployed consensus limits are different evidence.
 
 | Item | Value or procedure | Boundary |
 | --- | --- | --- |
 | Payload | 128 KiB (131,072 bytes) | SDK `$payload` cell limit; ABI and transaction overhead are additional. |
 | Entire transaction bytes | Deployed maximum not verified | Do not substitute the payload bound or an upstream txpool default. Estimate the actual operation and bound uploads. |
-| HTTP request bytes | Provider-specific; measure the encoded request | Hex calldata, ABI and JSON add overhead. Retained Tiramisu unsigned estimates with a 131,072-byte payload returned HTTP 413, including a payload-only operation. This does not establish a consensus limit. Choose chunk sizes from accepted exact estimates. |
+| HTTP request bytes | Tiramisu ingress accepted 262,144 bytes and rejected 262,145 in retained 2026-10-07 probes | Provider observation, not consensus. Payload is hex-encoded, roughly doubling bytes before ABI/JSON overhead. The tested no-attribute create ceiling was 130,144 payload bytes; attributes and fee/request fields lower it. Prefer at most about 128,000 payload bytes or chunk, and measure the actual estimate AND signed-send body; this margin is not a universal guarantee. |
 | Attribute cells | 32 per operation; 30 user attributes on create | SDK encoding budget: payload/content type consume two create cells; patch set/unset and supplied system cells share the operation budget. |
 | User attributes after patch | 32 on the observed Tiramisu engine | Count distinct names in the resulting state: retained names plus new `set` names minus removed `unset` names. `$payload`/`$contentType` are excluded. A 33rd user attribute was rejected with `TooManyAttributes(33,32)`; splitting transactions does not raise this ceiling. |
 | Attribute name | 32 ASCII bytes | Recommended lowercase subset, leading letter, no reserved keywords. |
@@ -17,6 +17,7 @@ Checked through 2026-10-07 against SDK 0.8.1 and bounded Tiramisu probes. SDK va
 | Gas per create | Estimate exact calldata with `eth_estimateGas` | Payload, attributes and requested lifetime affect cost. A single small successful estimate cannot establish marginal or maximum gas. |
 | RPC rate and cost | Inspect `ratelimit`, `Retry-After`, `Arkiv-Cost`, `Arkiv-Quota-Used-Percent` | Observed headers vary by request/account/provider. Stop on quota exhaustion; do not invent a monthly allowance. |
 | Writes per batch | No fixed 1,000-operation SDK ceiling | Gas, encoding size and provider limits still bound a transaction; an empty batch throws. |
+| JSON-RPC batch / log result | Retained Tiramisu probes: 50 requests per RPC batch; 20,000 logs per `eth_getLogs` result | Provider observations, not entity-operation limits. Split RPC batches and shrink finite log ranges on capacity errors; never skip a block or advance a failed checkpoint. See `arkiv-indexing` for method-specific errors. |
 
 Reserved names (case-insensitive): `and`, `or`, `not`, `true`, `false`, `startswith`, `exists`, `typeof`, `bool`, `i32`, `u64`, `u256`, `dec`, `bytes32`, `bytes`, `str`, `addr`, `key`. Application names cannot start with `$` or contain `--`; the recommended subset excludes both already.
 

@@ -1,11 +1,11 @@
 ---
 name: arkiv-data-modeling
-description: Design typed Arkiv entity models for application queries, PostgreSQL mappings, marketplace schemas and relationships. Use when choosing attributes versus payload, exact numeric encodings, application IDs, entity-key references or consistency rules. This skill designs models; importing rows and executing writes require their own authorization.
+description: Design typed Arkiv entity models for application queries, PostgreSQL mappings, marketplace schemas and relationships. Use when choosing attributes versus payload, exact numeric encodings, application IDs, entity-key references or consistency rules. Use arkiv-social-graph to read or visualize relationships with arkiv-graph. Importing rows and executing writes require their own authorization.
 license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
   network: "tiramisu"
-  verified: "2026-10-05"
+  verified: "2026-10-08"
 ---
 
 # Model data for the queries you need
@@ -22,7 +22,7 @@ Check the installed SDK version and declarations. Examples below target SDK 0.8.
 
 - Put scalar fields needed by predicates in **attributes**. Put nested objects, arrays, long descriptions and other unqueried data in **payload**. Both are public; exclude secrets and private fields before encoding either.
 - Create permits 32 cells total. Payload and content type consume two, leaving **30 user attributes**, including namespace and schema fields. Patches also count system mutations against their operation budget. Separately, Tiramisu caps the resulting entity at **32 user attributes** after a patch; splitting transactions cannot grow beyond that state ceiling.
-- Use lowercase `snake_case` application names, at most 32 bytes, beginning with a letter. The SDK accepts a wider alphabet than the current node; this conservative convention avoids the uppercase node rejection. `project` plus `entity_type` scopes an application's data. Anyone can copy these values; scope trusted reads by creator too.
+- Use lowercase `snake_case` application names, at most 32 bytes, beginning with a letter; exclude reserved query words and type tags listed in [limits](../arkiv/references/limits.md). The SDK accepts a wider alphabet than the current node; this conservative convention avoids the uppercase node rejection. `project` plus `entity_type` scopes an application's data. Anyone can copy these values; scope trusted reads by creator too.
 - A `str` holds at most 128 UTF-8 bytes and excludes C0 controls and DEL. Validate a text limit from the input contract; never silently truncate or replace a requested text filter with a hash.
 - There are nine user attribute types. `bytes` is system-only payload storage, not a tenth user type. No indexed array, object or null constructor exists.
 
@@ -33,16 +33,20 @@ Check the installed SDK version and declarations. Examples below target SDK 0.8.
 | `u64(1700000000000n)` | Unsigned 64-bit integer; app milliseconds and blocks | None |
 | `u256(1250n)` | Unsigned 256-bit integer; exact minor currency/token units | JavaScript `bigint` |
 | `dec('12.50')` | Signed fixed-point, 18 decimal places; canonical decimal string | None |
-| `bytes32('0x' + 'ab'.repeat(32))` | Exactly 32 opaque bytes | None |
+| ``bytes32(`0x${'ab'.repeat(32)}`)`` | Exactly 32 opaque bytes | None |
 | `str('listing_42')` | UTF-8 text | JavaScript `string` |
 | `addr('0x1111111111111111111111111111111111111111')` | Address | None |
-| `key('0x' + '12'.repeat(32))` | Entity reference; dangling targets are allowed | None |
+| ``key(`0x${'12'.repeat(32)}`)`` | Entity reference; dangling targets are allowed | None |
 
-Use the same constructor when writing and querying: `price_minor: u256(1250n)` pairs with `eq('price_minor', u256(1250n))`. Bare `1250` is `i32`; bare `1250n` is `u256`. A timestamp from `Date.now()` needs `u64(...)` because it exceeds `i32`.
+Use the same constructor when writing and querying: `price_minor: u256(1250n)` pairs with `eq('price_minor', u256(1250n))`. Bare `1250` is `i32`; bare `1250n` is `u256`. A timestamp from `Date.now()` needs `u64(...)`; a bare timestamp is rejected as an out-of-range `i32`.
 
 For exact money, choose a documented currency and scale. Store nonnegative minor units with `u256`, or signed decimal amounts with `dec` using a decimal string. Fractional JavaScript numbers are rejected by `dec`; excess decimal precision is rejected, not rounded. Decide rounding in the application's numeric layer.
 
+`dec` preserves the numeric value, not its input formatting; `addr` returns a checksummed address. Keep exact source strings in payload when needed, declare any display scale, and compare addresses case-insensitively.
+
 Omit a nullable attribute when absent; an update to null must unset the old attribute. Preserve `0`, `false` and `''`. Infer absence only from a complete attribute projection. JSON payload can retain explicit null, array order and duplicates.
+
+There is no supported `EXISTS` predicate. Within a project/type/creator scope, ordered types can express absence with `not(gte(name, minimumOfStoredType))`; use a documented `has_<field>: bool(...)` projection for other types or when explicit null semantics matter. Request all attributes before inferring absence; see [typed predicates](../arkiv-query/SKILL.md).
 
 `createdAt`, `updatedAt` and `expiresAt` metadata are block heights. Store application time separately as `created_at: u64(milliseconds)` with a declared clock/timezone policy.
 
@@ -151,7 +155,7 @@ The `seller` attribute is an application claim, not proof of who signed. Keep pa
 - **Versioning:** index `schema_version` for migrations. Define how old/new schemas coexist, how consumers choose revisions, and how replaced entity keys are remapped. Readonly content requires a new entity and updated references.
 - **Soft delete:** `active: bool(false)` is an application filter, not deletion or a privacy control. Other readers can still request the data. Deletion and Entity Expiration remove live entities but cannot retract copies someone already read.
 - **Reorganizations and uncertain writes:** make projections replayable from stable application identities. Reconcile receipt/state at the application's chosen confirmation policy before retrying a transaction or repointing references.
-- **Top-N/aggregates:** the current SDK does not expose application-attribute ordering or general aggregates. Fetch the required pages before sorting a copy or aggregating; sorting one page cannot establish a global top-N. A raw filtered count is a separate API operation, not a general aggregate.
+- **Top-N/aggregates:** the current SDK does not expose application-attribute ordering or general aggregates. Fetch the required pages before sorting a copy or aggregating; sorting one page cannot establish a global top-N. A raw filtered count uses `arkiv_getEntityCount` with `params: [{ query }]`; SDK `getEntityCount()` is chain-wide and unknown filter keys do not make it filtered. See [raw count](../arkiv-query/references/json-rpc.md).
 
 ## Errors to recognize
 
@@ -161,7 +165,9 @@ The `seller` attribute is an application claim, not proof of who signed. Keep pa
 | `a fractional number cannot be represented exactly in binary floating point` | Pass `dec` a decimal string. |
 | `MissingValueError` / `An attribute is either set with a value and a type or not set at all` | Omit an absent attribute; unset it when patching to absence. |
 | `TooManyAttributesError` | Count the operation's system cells and user attributes. Move unqueried data to payload. |
-| `Ident32InvalidByte` | Check names; use the conservative lowercase convention. |
+| `InvalidAttributeNameError` | Check grammar, reserved words/type tags and the 32-byte limit. |
+| `UntypedValueError` | Move objects and arrays into payload or design explicit scalar projections. |
+| `outside the name charset` / decoded `Ident32InvalidByte` | Use lowercase names. SDK 0.8.1's rendered charset text includes uppercase letters that Tiramisu rejects. |
 | `NoEntityFoundError` | A relation target may be missing, deleted or expired; do not assume historical erasure. |
 
 For a tool-assisted schema proposal, check the actual tool's input and output contract. A `check_schema` string match is not a certification. If a connected profile offers `generate_entity_model` or `design_entity_model`, treat the result as a model to review; its presence does not authorize writes. This skill works directly from source schemas without those tools.

@@ -5,7 +5,7 @@ license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
   network: "tiramisu"
-  verified: "2026-10-06"
+  verified: "2026-10-08"
 ---
 
 # Mirror Arkiv state into an application
@@ -26,6 +26,8 @@ The historical **0.2.2** archive depended on SDK **`^0.6.8`**, statically import
 
 Use the installed `AGENTS.md` and README for configuration, source checkpoints, owner/sync isolation and reorganization recovery. Serialize the signer and preserve a durable caller write journal. `WriteReconciliationRequiredError` stops further writes until the known outcome is reconciled; restart is not evidence that an earlier write failed. Controlled source/reorg fixtures do not prove a natural network reorganization, and the default external ERC20 source has not been certified by those native-event tests.
 
+The 0.3.0 package's archived candidate evidence and some README wording predate publication. They describe that historical execution, not current registry availability. The registry-installed `dist/index.js` SHA256 `180b2346b53d95c5f3e7a363b4e15be627a9d1fabb6375ec8d9b546d1028f90a` matches the archived tested entry. Check the versioned manifest and installed module independently; do not read `publicationVerified: false` in a candidate receipt as proof that the package is unpublished.
+
 ## Source contract
 
 - Read the five native operation events from **`0x4400000000000000000000000000000000000044`**, with SDK `ENTITY_EVENTS_ABI`. Filter by that address, not only matching topics. Event names are `EntityCreated`, `EntityPatched`, `ExpiryExtended`, `OwnershipTransferred`, `EntityDeleted`.
@@ -33,7 +35,7 @@ Use the installed `AGENTS.md` and README for configuration, source checkpoints, 
 - SDK `watchEntityEvents` context has block number, transaction hash and log index. Fetch block hashes and parent hashes separately; its callback context is not a checkpoint hash or proof of canonicality.
 - Treat a watcher as a wake-up/invalidation signal. A durable consumer also scans complete bounded block ranges, including blocks with no matching logs, and awaits its own processing queue. Watcher callbacks are not an awaited database commit.
 - For replay, preserve block/log order and deduplicate delivery. Use chain identity, block hash, transaction hash and log index in event identities. A transaction may recur after a reorganization, so transaction hash alone is insufficient.
-- Scope fetched entities by configured project/type and trusted creator. Ownership changes do not replace original authorship. A derived database does not become an authorization service or proof that payload content is true.
+- Scope fetched entities by configured project/type and trusted creator. This locates rows; publishing or privileged use still requires the readonly, signed-version or authenticated-history policy in `arkiv-security-trust`. Ownership changes do not replace original authorship. A derived database does not become an authorization service or proof that payload content is true.
 
 ## Choose the mirror's meaning
 
@@ -49,23 +51,23 @@ Several mutations in one block can be coalesced into one final row read per touc
 ## Checkpoint workflow
 
 1. Store the chain ID, genesis/reset identity, projection scope/schema version and baseline snapshot. A chain ID alone cannot distinguish a reset. Bootstrap with a complete pinned query before following later blocks.
-2. Choose confirmation lag, maximum range/read budget and a rollback journal window as application policies. Do not describe a fixed depth as irreversible finality.
-3. Before continuing, re-fetch the saved checkpoint block header and compare its hash. Fetch the next header and complete native log range; require contiguous numbers and matching parent/hash identity.
+2. Choose confirmation lag, maximum range/read budget and a rollback journal window as application policies. The audited Tiramisu endpoint rejected JSON-RPC batches above 50 calls and log results above 20,000; these are observed provider limits, not protocol constants. Use bounded batches and adaptive range splitting for recognized capacity errors. Do not describe a fixed depth as irreversible finality.
+3. Before continuing, re-fetch the saved checkpoint block header and compare its hash. Fetch the next header, then its complete native logs by `blockHash`; require contiguous numbers and matching parent/hash identity, including empty log results. Recheck the canonical header after staged reads and before committing.
 4. Stage the affected row reads at that block, including owner and expiry updates. A read error or unavailable snapshot leaves the checkpoint unchanged.
 5. Sweep rows whose expiry is at or before that checkpoint, even when the block has no operation logs. An extension processed before its deadline changes the stored deadline before the sweep.
 6. Atomically commit projection changes, replay identities/journal and the checkpoint. In PostgreSQL, use a transaction scoped to this indexer's owned projection. Do not advance the cursor after only the first log or before writes finish.
 7. On a hash mismatch, find a verified common ancestor inside the retained journal, roll back only this indexer's derived state, and replay the new canonical blocks. A timeout is not evidence of a reorganization.
 8. If no ancestor or historical state is available, stop and rebuild an isolated projection generation from a fresh complete snapshot. A reset or changed genesis/config identity needs a new generation, not replay under the old cursor.
 
-Read [checkpoint-mirror.md](references/checkpoint-mirror.md) for a runnable SDK block reader, pinned row adapter and in-memory projection example. It demonstrates an owned rollback journal; it is not a production database adapter. Configure a transport timeout and quota budget before running it against RPC.
+Read [checkpoint-mirror.md](references/checkpoint-mirror.md) for a runnable SDK block reader, configurable pinned row adapter, conservative membership prefilter, retained-journal serialization/restore and ancestor walk. It demonstrates an owned projection; configure transactional persistence, transport timeout and quota budget before running a worker.
 
 ## Worked scenario
 
-A marketplace mirror starts from a pinned snapshot, then processes complete blocks. A create adds a row; a patch re-fetches its typed price and payload; a transfer updates current owner while retaining creator. A delete removes the current projection row. An expiry-only block removes due rows without an event. Replaying a previously committed block is a no-op.
+A marketplace mirror starts from a pinned snapshot, then processes complete blocks. A create adds a row; a patch re-fetches its typed price and payload; a transfer updates current owner while retaining creator. A delete removes the current projection row. An expiry-only block removes due rows without an event. Replaying the same hash inside the retained journal is a no-op; an older block outside that window requires explicit historical verification or a new generation.
 
 If a saved block hash changes, restore this projection to the verified common ancestor, then process the replacement blocks. The local journal restores the prior row and deadline; replacement creates/patches produce the canonical view. A failed snapshot read commits neither rows nor checkpoint.
 
-The fixture walkthrough covers those transitions and a reset identity rejection. It changes only Maps created by the example. It does not delete database rows or send Arkiv transactions.
+Controlled regressions cover those transitions, failed reads/canonical rechecks, serialized-journal restart/rollback, corrupt-state rejection and reset identity rejection. They change only state created by the example and do not certify a production storage adapter or a natural network reorganization.
 
 ## Expiration, recovery and privacy
 
@@ -79,21 +81,28 @@ The fixture walkthrough covers those transitions and a reset identity rejection.
 
 | Error or observable condition | Required handling |
 | --- | --- |
-| `QueryError.kind === 'block'` | Stop pinned reads and preserve the checkpoint. No historical-to-head fallback. |
+| `QueryError.kind === 'block'` / query code `-32006` | Preserve the checkpoint. If the requested block exceeds a fresh serving-node head, wait for lag to clear; if unavailable historical state is confirmed, stop/rebuild under the retention policy. No head substitution. |
+| `eth_getLogs` capacity error, including `-32602` with `query exceeds max results 20000` or viem `ResponseBodyTooLargeError` | Reduce/split the bounded range; preserve work until every interval succeeds. Use the [bounded replay error classifier](../arkiv-app-integration/references/realtime.md); unrelated invalid parameters remain fatal. |
+| `eth_getLogs` range above the serving node's head | Wait for lag to clear, preserving the checkpoint; reducing the range is not proof of completion. |
+| JSON-RPC batch HTTP `413` with `batch exceeds 50 calls` | Split into batches of at most 50 and obey the endpoint's current body/quota limits. |
+| `eth_getLogs({ blockHash })` code `-32001` / missing block hash | Re-fetch canonical headers and investigate fork/provider views; this method-specific missing-resource error is not query parser code `-32001`. |
 | HTTP `429` / `Retry-After` | Defer, preserving pending work and checkpoint. |
 | `Checkpoint hash mismatch` | Find a verified ancestor; roll back owned projection state and replay. |
 | `Noncontiguous block or parent hash mismatch` | Recheck canonical headers; do not skip missing blocks. |
+| `Snapshot block mismatch`, `Log does not belong to the canonical block`, `Canonical log position unavailable`, `Block hash unavailable`, `Canonical header changed during projection read` | Preserve rows/checkpoint, recheck canonical headers and retry only the uncommitted block after the read condition is resolved. |
 | `Chain identity changed; start a new projection generation` | Re-bootstrap under the new identity and scope. |
 | `Snapshot row belongs to another creator` | Reject the row; review scope/provenance. |
 | `Ancestor outside retained projection journal` | Rebuild from a verified baseline; do not invent old state. |
+| `Block older than retained journal` | Do not misclassify as a new reorg; verify historical canonicality separately or reject the replay request. |
+| `Corrupt projection ...` / `Projection identity/schema mismatch` | Quarantine the state, verify trusted storage/identity and rebuild an owned generation; file corruption is not evidence of a chain reorg. |
 
 If an available tool profile offers read-only entity verification, use it to corroborate an authorized key and state what it checked. No tool is required to implement this SDK consumer.
 
 ## Sources
 
 - SDK 0.8.1: [five-event ABI](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/entity/events.ts), [watcher address/context/callback handling](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/actions/public/watchEntityEvents.ts), [event types](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/types/events.ts), [head entity lookup](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/actions/public/getEntity.ts), [pinned query engine](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/query/engine.ts).
-- Current release: [0.3.0 manifest](https://unpkg.com/arkiv-sync@0.3.0/package.json), [public declarations](https://unpkg.com/arkiv-sync@0.3.0/dist/index.d.ts), [compiled module](https://unpkg.com/arkiv-sync@0.3.0/dist/index.js), [scaffolder manifest](https://unpkg.com/create-arkiv-sync@0.3.0/package.json), [immutable consumer/source guide](https://github.com/SantiagoDevRel/arkiv-sync/tree/a43aa53415d5b3f627f74781fc118d1164733b68) and [current execution evidence](https://unpkg.com/arkiv-sync@0.3.0/docs/current-candidate-evidence.json). Publication is verified separately from the archived candidate execution.
+- Current release: [0.3.0 manifest](https://unpkg.com/arkiv-sync@0.3.0/package.json), [public declarations](https://unpkg.com/arkiv-sync@0.3.0/dist/index.d.ts), [compiled module](https://unpkg.com/arkiv-sync@0.3.0/dist/index.js), [scaffolder manifest](https://unpkg.com/create-arkiv-sync@0.3.0/package.json), [immutable consumer/source guide](https://github.com/SantiagoDevRel/arkiv-sync/tree/a43aa53415d5b3f627f74781fc118d1164733b68) and [pre-publication candidate execution evidence](https://unpkg.com/arkiv-sync@0.3.0/docs/current-candidate-evidence.json). Publication is verified separately from the archived candidate execution.
 - Historical compatibility gate: [arkiv-sync 0.2.2 manifest](https://unpkg.com/arkiv-sync@0.2.2/package.json), [published module](https://unpkg.com/arkiv-sync@0.2.2/dist/index.js), [SDK 0.8.1 chain exports](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/chains/index.ts). Published source, not a repository assumption, establishes the mismatch.
 - Official [query guide](https://docs.arkiv.network/typescript-sdk/querying-data/) and [native operation protocol](https://docs.arkiv.network/json-rpc/mutating-entities/).
 
-Checked 2026-10-06 UTC. The worked Arkiv-to-app Map consumer compiles against SDK 0.8.1 and runs with deterministic native-log/query fixtures; that example performs no funded writes or user database changes. Separate package evidence documents scoped live EVM-source/sink and application readback results.
+Checked 2026-10-08 UTC. The exact worked consumer compiles with strict/noUncheckedIndexedAccess against SDK 0.8.1 and passes controlled native-log/query/restart regressions; those regressions make no live RPC requests, funded writes or user database changes. A separate read-only probe exercised the published EVM source on a two-block Ethereum WETH Transfer range with canonical header rechecks. Archived package evidence documents earlier scoped sink and application readback results.

@@ -1,6 +1,6 @@
 ---
 name: arkiv-entity-lifecycle
-description: Create, patch, transfer, replace, or delete Arkiv entities with @arkiv-network/sdk. Use for readonly and permissionlessExtension flags, mutation permissions, ownership versus creator provenance, patch budgets, native batch order, and restoring entity references. Use arkiv-entity-expiration for deadline calculations and arkiv-write-safety for ambiguous submissions.
+description: Create, patch, transfer, replace, or delete Arkiv entities with @arkiv-network/sdk. Use for readonly and permissionlessExtension flags, mutation permissions, ownership versus creator provenance, patch budgets, native batch order, and restoring entity references. Use arkiv-first-write for setup or a first entity, arkiv-entity-expiration for deadlines and arkiv-write-safety for ambiguous submissions.
 license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
@@ -31,6 +31,8 @@ Create uses `flags: { readonly, permissionlessExtension }`. Both default to `fal
 
 These permissions apply to live entities. Choose a later deadline to add lifetime; transfers to the current owner or zero address fail. A previous owner loses owner-only rights after transfer. A readonly entity can still be transferred, extended, or deleted by its owner.
 
+To add N blocks, target `ExpirationTime.atBlock(current.expiresAt + N)`. `fromHours(1)` means one hour from inclusion, not one additional hour on the current deadline; see `arkiv-entity-expiration`.
+
 For a typo in readonly content, create a corrected entity with a new key and update references. Plan the replacement and verify it before retiring an old entity the user authorized you to remove. Readonly refers to payload and attributes, not the entity's entire lifecycle.
 
 Permissionless extension lets others pay to keep an entity alive. It grants no patch, transfer, or delete permission, and another party can postpone expiration the owner wanted. Neither expiration nor readonly is a privacy control; plaintext data is public.
@@ -40,6 +42,7 @@ Permissionless extension lets others pay to keep an entity alive. It grants no p
 - `$owner` is the current owner. `$creator` is the creating wallet and never changes. After transfer, a new owner can rewrite mutable content while the creator still names the original wallet. Creator filtering does not prove who authored the current payload.
 - Patch `set` writes only named attributes; `unset` removes named attributes. Omitting payload or content type preserves it; an empty payload explicitly replaces it with empty bytes. Unsetting an absent attribute is allowed.
 - Patch cannot change the key, owner, flags, or expiration. Use `changeOwnership` or `extendEntity` for those fields.
+- Patch has no compare-and-set condition: concurrent owner writes are last-writer-wins. Only the current owner can patch; use an application writer queue or an explicit conflict policy.
 - Each patch has at most 32 mutation cells: distinct `set` names + distinct `unset` names + one for a supplied payload + one for a supplied content type. A name cannot appear in both `set` and `unset`. Create reserves two cells, leaving 30 user attributes. Use snake_case names and lowercase MIME types without parameters.
 - Separately, the observed Tiramisu engine caps the resulting entity at **32 user attributes**, excluding payload/content type. Count the union of retained and `set` names after removing `unset` names; replacing an existing name adds no slot. Only a mutable entity can grow from 30 to 31–32 by patching. Splitting writes cannot fit a 33rd attribute; remove an attribute or explicitly revise the payload/schema instead.
 
@@ -58,14 +61,16 @@ import { isAddressEqual, zeroAddress, type Address, type Hex } from "viem"
 type Wallet = ReturnType<typeof createWalletClient>
 type Reader = ReturnType<typeof createPublicClient>
 
-export async function publishSnapshot(wallet: Wallet, communityRenewal = false) {
+export async function publishSnapshot(
+  wallet: Wallet, communityRenewal = false, expires: Expiry = ExpirationTime.fromDays(30),
+) {
   return wallet.createEntity({
     payload: jsonToPayload({ title: "Published note", body: "Example body" }),
     contentType: "application/json",
     attributes: {
       project: "example_notes", entity_type: "note", created_at: u64(Date.now()),
     },
-    expires: ExpirationTime.fromDays(30),
+    expires,
     flags: { readonly: true, permissionlessExtension: communityRenewal },
   })
 }
@@ -148,7 +153,9 @@ export async function patchThenDelete(wallet: Wallet, entityKey: Hex) {
 }
 
 // Precondition: exclusive custody of every create from this wallet until confirmation.
-export async function createRelatedNotes(reader: Reader, wallet: Wallet) {
+export async function createRelatedNotes(
+  reader: Reader, wallet: Wallet, expires: Expiry = ExpirationTime.fromDays(30),
+) {
   if (!wallet.account) throw new Error("Connect an account before predicting keys")
   const [parent, child] = await reader.predictEntityKeys({
     owner: wallet.account.address, salts: [NO_SALT, NO_SALT] as const,
@@ -159,7 +166,7 @@ export async function createRelatedNotes(reader: Reader, wallet: Wallet) {
         salt: parent.salt, payload: jsonToPayload({ title: "Parent" }),
         contentType: "application/json",
         attributes: { project: "example_notes", entity_type: "parent" },
-        expires: ExpirationTime.fromDays(30),
+        expires,
       },
       {
         salt: child.salt, payload: jsonToPayload({ title: "Child" }),
@@ -167,7 +174,7 @@ export async function createRelatedNotes(reader: Reader, wallet: Wallet) {
         attributes: {
           project: "example_notes", entity_type: "child", parent: key(parent.key),
         },
-        expires: ExpirationTime.fromDays(30),
+        expires,
       },
     ],
   })
@@ -187,13 +194,18 @@ Transfer inspection is a subsequent head read. Later transactions can change own
 
 `executeBatch` is atomic and the SDK orders operations as creates → patches → deletes → extensions → ownership changes, regardless of object property order. `patchThenDelete` patches first. If that patch fails, the deletion is not applied. Deleting and extending the same key in a batch fails because deletion runs first; split or change the intended operations.
 
+To transfer several authorized entities atomically, use `await wallet.executeBatch({ ownershipChanges: [{ entityKey, newOwner }] })` with one entry per entity. Validate every destination and retain the transaction hash; a recipient does not consent to incoming ownership, and receiving a batch does not authenticate its content.
+
 The related-note example uses the creator's entity-minting nonce, not its transaction nonce. `NO_SALT` resolves to zero salt; it does not bypass nonce-based identity. Reuse the returned salts exactly. Any intervening create from that owner invalidates predictions, even from another application or wallet session. If `predictionsMatch` is false, keep the confirmed transaction hash and actual keys, inspect and repair the child reference; do not resubmit the batch.
+
+Zero salts make keys predictable to anyone who knows the creator and minting nonce. When public predictability is unnecessary, request `count: 2` instead of explicit salts and reuse the returned random salts. For a cycle, predict every key first and place references on both creates; readonly references cannot be patched afterward. Both helpers accept a caller-selected `Expiry` instead of requiring the default 30 days.
 
 Without exclusive custody, use stable application IDs for independently recoverable writes, or create the parent first and use its confirmed key. Namespace and ID filters do not enforce uniqueness.
 
 ## End of life and errors
 
 - Delete removes the live entity immediately; Entity Expiration removes it when its deadline is reached. Neither operation retracts copies already read by others. An expired entity cannot be revived: recreate it with a new key and remap references.
+- For one authorized entity, use `await wallet.deleteEntity({ entityKey })`; the caller must own it. Keep its transaction hash and reconcile before any retry.
 - Expiration emits no event. Poll or sweep deadlines using `arkiv-entity-expiration`. `NoEntityFoundError` covers never-created, deleted, and expired entities; it does not prove which occurred.
 
 | Error or revert | Action |
@@ -208,6 +220,8 @@ Without exclusive custody, use stable application IDs for independently recovera
 | Decoded engine `TooManyAttributes(count,32)` | The resulting entity has too many user attributes. Unset fields or explicitly move them into payload; splitting transactions does not fix this state limit. The decoded revert name need not appear in `error.name` or its message. |
 | `EntityMutationError` | Inspect its hash and receipt before retrying; load `arkiv-write-safety`. |
 
+The engine names above are decoded revert names, not JavaScript exception classes or guaranteed message fragments. Extract them through the cause chain using [the error catalog](../arkiv-troubleshooting/references/error-catalog.md). A decoded estimate rejection helps correct inputs, but only instrumented proof that send admission was never reached establishes no broadcast. Missing hashes and unchanged nonces alone do not; retain write-safety's reconciliation rule.
+
 ## Verification and references
 
 Verify mutation receipts and read back the selected fields. If a connected read-only profile provides `verify_entity` or `verify_tx`, inspect its schema and use it as an additional check; the SDK and explorer remain sufficient, and signing keys stay in the developer's wallet or server.
@@ -215,4 +229,4 @@ Verify mutation receipts and read back the selected fields. If a connected read-
 - [Backup and restore](references/backup-restore.md): pinned snapshots, new identities, relation remapping, and cyclic graphs.
 - [Native mutations](https://docs.arkiv.network/json-rpc/mutating-entities/): permissions, flags, batches, events, and exact revert names.
 - [Query fields](https://docs.arkiv.network/typescript-sdk/querying-data/): current owner versus immutable creator.
-- [SDK 0.8.1 source](https://github.com/Arkiv-Network/arkiv-sdk-js): `src/entity/flags.ts`, `src/actions/wallet/patchEntity.ts`, `src/attr/attributes.ts`, `src/utils/arkivTransactions.ts`, and `src/actions/public/predictEntityKeys.ts`.
+- [SDK 0.8.1 source](https://unpkg.com/@arkiv-network/sdk@0.8.1/src/): `entity/flags.ts`, `actions/wallet/patchEntity.ts`, `attr/attributes.ts`, `utils/arkivTransactions.ts`, and `actions/public/predictEntityKeys.ts`.

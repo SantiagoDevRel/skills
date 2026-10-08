@@ -1,16 +1,35 @@
 # Current raw JSON-RPC
 
-Protocol basis: SDK 0.8.1 and official Tiramisu docs, checked 2026-10-05. RPC: `https://rpc.tiramisu.db-chain.testnet.arkiv.network`; chain ID `7738577` (`0x7614d1`). Check a Python/Rust client's actual wire encoding against these sources; language support does not establish compatibility with this protocol.
+Protocol basis: SDK 0.8.1 and official Tiramisu docs, source checked 2026-10-08 with earlier live responses retained separately. RPC: `https://rpc.tiramisu.db-chain.testnet.arkiv.network`; chain ID `7738577` (`0x7614d1`). Check a Python/Rust client's actual wire encoding against these sources; language support does not establish compatibility with this protocol.
 
 ## Query shape and options
 
 `arkiv_query` takes `[expression, options]`. The options whitelist is `atBlock`, `select`, `limit`, `cursor`. Query `atBlock` and the documented `limit` are hex quantities; max page size is 200. The node also accepted the published numeric limit 100, but hex matches the typed SDK wire contract.
 
-`select` is a flat projection: `key`, `owner`, `creator`, `createdAt`, `updatedAt`, `expiresAt`, `creationFlags`, `contentType`, `payload`, `attributeSchema`, `attributes`. `attributes` can be true or a map of attribute names to booleans. Do not put SDK selection arrays on the raw wire. The result has `data`, hex `blockNumber` and optional `cursor`; missing cursor means completion.
+`select` is a flat projection: `key`, `owner`, `creator`, `createdAt`, `updatedAt`, `expiresAt`, `creationFlags`, `contentType`, `payload`, `attributeSchema`, `attributes`. `attributes` can be true or a map of attribute names to booleans. Array-form selections are an older SDK style and are rejected on this wire. The result has `data`, hex `blockNumber` and optional `cursor`; missing cursor means completion. Omitting `limit` returns at most 100 rows per page, with a cursor when more remain.
+
+Raw attributes are an array of `{name, type, value}`, not the SDK's typed attribute map. A projected row can look like this:
+
+```json
+{"key":"0x1212121212121212121212121212121212121212121212121212121212121212","owner":"0x1111111111111111111111111111111111111111","attributes":[{"name":"price_minor","type":"u256","value":"0xd3c21bcecceda1000000"},{"name":"active","type":"bool","value":true}]}
+```
+
+| Declared type or field | Raw JSON encoding | Decode |
+| --- | --- | --- |
+| `u64`, `u256` | `0x` quantity string | Exact integer, such as `BigInt(value)`; never a JavaScript number for large values. |
+| `i32` | JSON number | Signed 32-bit integer. |
+| `bool` | JSON boolean | Preserve the boolean. |
+| `dec` | Decimal string | Exact decimal with up to 18 fractional digits. |
+| `str` | String | Preserve its contents. |
+| `bytes32`, `key`, payload/system `bytes` | `0x` data string | Preserve fixed width for keys/bytes32; decode payload bytes explicitly. |
+| `addr`, `owner`, `creator` | 20-byte address string; Tiramisu returns lowercase | Compare addresses case-insensitively; SDK decoding normalizes checksum casing. |
+| `createdAt`, `updatedAt`, `expiresAt`, result `blockNumber` | `0x` quantity string | Exact block number, separate from an application timestamp. |
+
+Dispatch on the declared type, not the apparent size of a value. The SDK also tolerates decimal integer strings; that tolerance does not change the current node's encoding.
 
 Keep the exact expression, block and selection when following the opaque cursor. Raw `*` is accepted, but application examples below use an explicit creator scope. The current node rejects unknown query options with `-32602`; it rejects the SDK-exported `!=`, `EXISTS` and `TYPEOF` expressions with `-32002`.
 
-This standard-library Python example reads **one page**. Set `ARKIV_CREATOR` to a creator known to your application; it validates the address format, obtains a snapshot and keeps the query scoped. It uses a User-Agent, timeout and no retry. A valid empty page is still a valid response.
+This server-side standard-library Python example reads **one page**. Set `ARKIV_CREATOR` to a creator known to your application; it validates the address format, obtains a snapshot and keeps the query scoped. An optional local `ARKIV_ACCESS_KEY` is sent only to the fixed official RPC below; redirects are refused. It uses a User-Agent, timeout and no retry. A valid empty page is still a valid response.
 
 ```python
 import json
@@ -24,14 +43,23 @@ creator = os.environ['ARKIV_CREATOR'].lower()
 if not re.fullmatch(r'0x[0-9a-f]{40}', creator):
     raise ValueError('ARKIV_CREATOR must be a 20-byte address')
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, new_url):
+        raise RuntimeError('RPC redirect refused; keep the access key on its intended origin')
+
+opener = urllib.request.build_opener(NoRedirect())
+headers = {'Content-Type': 'application/json', 'User-Agent': 'arkiv-query-example/0.8.1'}
+if os.environ.get('ARKIV_ACCESS_KEY'):
+    headers['X-API-KEY'] = os.environ['ARKIV_ACCESS_KEY']
+
 def rpc(method, params):
     request = urllib.request.Request(
         RPC,
         data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}).encode(),
-        headers={'Content-Type': 'application/json', 'User-Agent': 'arkiv-query-example/0.8.1'},
+        headers=headers,
     )
     try:
-        with urllib.request.urlopen(request, timeout=8) as response:
+        with opener.open(request, timeout=8) as response:
             body = json.load(response)
     except urllib.error.HTTPError as error:
         if error.code == 429 or error.headers.get('Retry-After'):
@@ -61,7 +89,7 @@ The SDK's empty-param count is chain-wide. Raw filtered count is an object in th
 {"jsonrpc":"2.0","id":2,"method":"arkiv_getEntityCount","params":[{"query":"$creator = addr(0x1111111111111111111111111111111111111111) AND entity_type = str('nft')"}]}
 ```
 
-The optional count `block` field is a JSON number. A bare query string is not this contract; a `filter` field can be ignored. The result is a JSON number. The exact filtered query-object shape was live-tested; historical count retention was not.
+The optional count `block` field is a JSON number. A bare query string is not this contract; a `filter` field can be ignored. The result is a JSON number. Retained Tiramisu responses from 2026-10-07 verify filtered counts of 0 before creation and 230 afterward over a short historical range. Long-range retention remains provider-dependent. SDK 0.8.1's typed count schema allows only empty params; use an explicit narrow raw-request boundary, as in the main skill, for this verified filtered shape.
 
 Raw entity lookup uses a JSON-number block, while query `atBlock` uses hex:
 
@@ -69,7 +97,7 @@ Raw entity lookup uses a JSON-number block, while query `atBlock` uses hex:
 {"jsonrpc":"2.0","id":3,"method":"arkiv_getEntity","params":["0x1212121212121212121212121212121212121212121212121212121212121212",4096]}
 ```
 
-Replace the illustrative key/block with the requested values. `arkiv_getEntity` returns all entity fields or null and has no select argument. A null read does not establish erasure, retained history, or whether an entity ever existed. Keep u64 values exact; JavaScript JSON numbers additionally need safe-integer bounds. Do not serialize a bigint directly to JSON.
+Replace the illustrative key/block with the requested values. `arkiv_getEntity` returns all entity fields or null and has no select argument; the current node ignores extra params instead of applying a projection. Use `arkiv_query` with `$key = key(...)` and `select` for a projection. A null read does not establish erasure, retained history, or whether an entity ever existed. Keep u64 values exact; JavaScript JSON numbers additionally need safe-integer bounds. Do not serialize a bigint directly to JSON.
 
 Query rejection codes are `-32001` parse, `-32002` type/operator, `-32003` literal, `-32004` complexity limits, `-32005` cursor and `-32006` block. `-32602` is invalid params. HTTP 429 with rate-limit headers is a service response, distinct from a successful empty `data` array. HTTP 401 `INVALID_KEY` was verified with an invalid placeholder access key; no real secret was needed.
 
@@ -129,7 +157,7 @@ export const nativeEventAbi = parseAbi([
 ]);
 ```
 
-`eth_estimateGas` validates the exact sender/calldata against current state without committing it or requiring funds for a broadcast. A passing estimate is not a persisted write, a concurrency reservation or a gas/fee guarantee for later submission.
+`eth_estimateGas` validates the exact sender/calldata against current state without committing it. Provider balance and fee rules can still reject an estimate; do not strip fields to manufacture success. A passing estimate is not a persisted write, a concurrency reservation, HTTP submission-size certification or a gas/fee guarantee for later submission.
 
 Encoding test vectors:
 

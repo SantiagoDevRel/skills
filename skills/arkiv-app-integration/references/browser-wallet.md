@@ -1,6 +1,6 @@
 # Injected browser wallet
 
-This helper connects an EIP-1193 EOA wallet and supplies an explicit account to SDK 0.8.1. Run it in a user-triggered browser interaction. It does not sign an entity write or supply a server key.
+This helper connects an EIP-1193 wallet and supplies an explicit account to SDK 0.8.1. Run it in a user-triggered browser interaction. It does not sign an entity write or supply a server key. `isAddress` validates address format only; it does not prove an EOA or account-abstraction compatibility. Verify the intended wallet's EOA signing path separately.
 
 ```typescript
 import { createWalletClient } from "@arkiv-network/sdk"
@@ -10,7 +10,7 @@ import { custom, isAddress, type EIP1193Provider } from "viem"
 export async function connectArkivWallet(provider: EIP1193Provider) {
   const addresses = await provider.request({ method: "eth_requestAccounts" })
   const account = addresses[0]
-  if (!account || !isAddress(account)) throw new Error("Connect an EOA wallet")
+  if (!account || !isAddress(account)) throw new Error("Connect a valid wallet account")
   try {
     await provider.request({ method: "wallet_switchEthereumChain",
       params: [{ chainId: "0x7614d1" }] })

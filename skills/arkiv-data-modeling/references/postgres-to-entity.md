@@ -10,7 +10,7 @@ Use schema-only DDL and the actual query workload. Do not request database crede
 | Primary key / UUID | Stable source ID in payload; `str` attribute when queried | Composite key encoding and application uniqueness |
 | Boolean | `bool` attribute if filtered; otherwise payload | Keep false distinct from null |
 | Small signed integer | `i32` when its range fits | Reject overflow before writing |
-| Signed `BIGINT` | Exact payload string; choose a lossless supported query encoding | `u64`/`u256` cannot store negative values; full signed 64-bit range does not fit `i32` |
+| Signed `BIGINT` | Exact payload string; `dec(sourceIntegerString)` for a signed queryable integer | `u64`/`u256` cannot store negative values; full signed 64-bit range does not fit `i32`. Never parse through an unsafe JavaScript number. |
 | Nonnegative large integer | `u64` or `u256` according to declared range | Do not parse through an unsafe JavaScript number |
 | Exact decimal / money | `dec` string up to 18 fractional places, or minor units with a declared scale | Reject unsupported precision/range; define rounding and currency |
 | Timestamp | Original timezone meaning in payload; `u64` epoch milliseconds if projected | Pre-epoch signed times and timezone conversion need an explicit encoding |
@@ -33,6 +33,8 @@ Create the listing first and tag entities second, or use an exclusive creator qu
 ## Optional deterministic converter
 
 The reviewed `postgres-to-entity` 0.3.1 archive is a model-only PostgreSQL DDL converter. Read the installed package's README and request example before using it. Its public input is `sql`, not a canonical `schema` object. It accepts a subset of `CREATE TABLE`; unsupported statements block conversion instead of silently producing a complete model.
+
+The converter uses `ds`/`kind` namespace fields, while this skill's worked model uses `project`/`entity_type`. Choose one convention per application and update every writer, reader and relationship projection together.
 
 Supply the requested filters and privacy/owner/expiration choices. `filters: []` explicitly chooses entity-key/owner access; omitting filters leaves a decision open. An intended array `contains` projection produces relationship entities, not a native `contains` query operator. Text projections require an explicit UTF-8 byte bound.
 

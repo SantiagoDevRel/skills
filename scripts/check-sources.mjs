@@ -49,7 +49,7 @@ async function get(url, request) {
 }
 export async function documentationSources(root = repositoryRoot) {
   const {files} = await readSnippets(root); const sources = new Map();
-  for (const source of files.filter(file => !file.file.includes('/arkiv-best-practices/'))) {
+  for (const source of files) {
     const text = await readFile(path.join(root, source.file), 'utf8');
     for (const match of text.matchAll(/https:\/\/docs\.arkiv\.network[^)\s]+/g)) {
       const url = match[0]; const skill = source.file.split('/')[1];

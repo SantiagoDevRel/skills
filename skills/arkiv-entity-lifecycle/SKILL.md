@@ -5,7 +5,7 @@ license: MIT
 metadata:
   arkiv-sdk: ">=0.8.1 <0.9"
   network: tiramisu
-  verified: "2026-10-05"
+  verified: "2026-10-08"
 ---
 
 # Arkiv entity lifecycle
@@ -179,7 +179,7 @@ export async function createRelatedNotes(reader: Reader, wallet: Wallet) {
 }
 ```
 
-The replacement accepts only this publisher's readonly JSON notes before parsing. Ownership authorizes the write; it does not authenticate content transferred in from another creator. Adapt the parser to the real schema. The new transaction signs the copied body and attributes under the connected publisher's identity; never republish unauthenticated content under a trusted signer. Repoint application references using the returned `replaces`/`entityKey` mapping and preserve old provenance separately. For other trust policies, use [publication authentication](../arkiv-security-trust/SKILL.md#trust-a-publication-not-a-namespace).
+The replacement accepts only this publisher's readonly JSON notes before parsing. Requiring current ownership is this helper's write policy; the protocol does not require ownership of an old entity to create a new one. Ownership does not authenticate content transferred in from another creator. Adapt the parser to the real schema. The new transaction signs the copied body and attributes under the connected publisher's identity; never republish unauthenticated content under a trusted signer. Repoint application references using the returned `replaces`/`entityKey` mapping and preserve old provenance separately. For other trust policies, use [publication authentication](../arkiv-security-trust/SKILL.md#trust-a-publication-not-a-namespace).
 
 Transfer inspection is a subsequent head read. Later transactions can change ownership or remove the entity before that read. Inspect the confirmed receipt and later operations before retrying; a read failure is not proof transfer failed.
 

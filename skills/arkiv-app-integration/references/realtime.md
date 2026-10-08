@@ -91,7 +91,9 @@ function smallerLogSpan(error: unknown, fromBlock: bigint, toBlock: bigint): big
     if ("code" in cause && cause.code === -32602 && /query exceeds max results/i.test(message)) {
       const hint = /retry with the range\s+(0x[\da-f]{1,64}|\d{1,78})\s*-\s*(0x[\da-f]{1,64}|\d{1,78})\b/i.exec(message)
       if (hint) {
-        const start = BigInt(hint[1]), end = BigInt(hint[2])
+        const [, startText, endText] = hint
+        if (startText === undefined || endText === undefined) return half
+        const start = BigInt(startText), end = BigInt(endText)
         // Only a hint covering our original prefix can reduce this request; never jump forward.
         if (start <= fromBlock && end >= fromBlock) {
           const clampedEnd = end < toBlock ? end : toBlock
